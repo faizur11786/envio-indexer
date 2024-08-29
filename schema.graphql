@@ -1,0 +1,49 @@
+type Factory_CollectionDeployed {
+  id: ID!
+  tokenAddress: String!
+  owner: String!
+  isERC1155: Boolean!
+  name: String!
+  symbol: String!
+  uri: String!
+}
+
+type SokosERC721_Transfer {
+  id: ID!
+  from: String!
+  to: String!
+  tokenId: BigInt!
+}
+
+type Collection @index(fields: ["contractAddress", "owner"]) {
+  id: ID!
+  contractAddress: String!
+  name: String!
+  symbol: String!
+  uri: String!
+  isERC1155: Boolean!
+  nfts: [Nft!]! @derivedFrom(field: "collection")
+  owner: Account!
+}
+
+# type NFT {
+#   id: ID!
+#   tokenId: BigInt!
+#   collection: Collection! @index
+#   owner: Account! @index
+#   metadata: String!
+# }
+
+type Nft {
+  id: ID! # tokenId
+  tokenId: BigInt!
+  collection: Collection! @index
+  owner: Account! @index
+  image: String!
+  attributes: String!
+  metadata: String!
+}
+
+type Account {
+  id: ID!
+}

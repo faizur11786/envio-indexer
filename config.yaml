@@ -1,0 +1,17 @@
+name: sokos-indexer
+
+networks:
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Factory
+        address:
+          - 0xE1eB832df4FE2e15df1ac8777fAfC897866caB21
+        handler: src/handlers/factory.ts
+        events:
+          - event: CollectionDeployed(address indexed tokenAddress, address owner, bool isERC1155, string name, string symbol, string uri)
+      - name: SokosERC721
+        handler: src/handlers/sokos-erc721.ts
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+            isAsync: true

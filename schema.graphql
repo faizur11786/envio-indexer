@@ -26,24 +26,60 @@ type Collection @index(fields: ["contractAddress", "owner"]) {
   owner: Account!
 }
 
-# type NFT {
-#   id: ID!
-#   tokenId: BigInt!
-#   collection: Collection! @index
-#   owner: Account! @index
-#   metadata: String!
-# }
-
 type Nft {
-  id: ID! # tokenId
+  id: ID!
   tokenId: BigInt!
-  collection: Collection! @index
   owner: Account! @index
+  collection: Collection! @index
+  tokenUrl: String!
   image: String!
+  name: String!
+  description: String!
+  isPhygital: Boolean!
+  standard: String!
+  supply: String!
   attributes: String!
-  metadata: String!
 }
 
 type Account {
   id: ID!
 }
+
+# type Nftcollection @entity {
+#   id: ID!
+#   contractAddress: String!
+#   name: String
+#   symbol: String
+#   maxSupply: BigInt
+#   currentSupply: Int!
+#   tokens: [Token!]! @derivedFrom(field: "collection")
+# }
+
+# type User @entity {
+#   id: ID!
+#   tokens: [Token!]! @derivedFrom(field: "owner")
+# }
+
+# type Token @entity {
+#   id: ID!
+#   tokenId: BigInt!
+#   collection: Nftcollection!
+#   owner: User!
+#   metadata: Metadata @derivedFrom(field: "token_id")
+# }
+
+# type Metadata @entity {
+#   id: ID!
+#   token_id: String!
+#   name: String!
+#   description: String!
+#   image: String!
+#   attributes: [Attribute!]! @derivedFrom(field: "metadata_id")
+# }
+
+# type Attribute @entity {
+#   id: ID!
+#   metadata_id: String!
+#   trait_type: String!
+#   value: String!
+# }

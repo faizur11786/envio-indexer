@@ -1,54 +1,87 @@
-import { handlerContext } from "generated";
+import { SokosERC721Contract_TransferEvent_handlerContext } from "generated";
 import { NftMetadata } from "./types";
 import { NftCache } from "./cache";
-
-const BASE_URI_UID = "QmeSjSinHpPnmXmspMjwiXyN6zS4E9zccariGR3jxcaWtq";
+import { userLogger } from "generated/src/Logs.gen";
+import QueryString from "qs";
 
 async function fetchFromEndpoint(
-  endpoint: string,
+  tokenAddress: string,
   tokenId: string,
-  context: handlerContext
+  logger: userLogger
 ): Promise<NftMetadata | null> {
   try {
-    const response = await fetch(`${endpoint}/${BASE_URI_UID}/${tokenId}`);
-    if (response.ok) {
-      const metadata: any = await response.json();
-      context.log.info(metadata);
-      return { attributes: metadata.attributes, image: metadata.image };
-    } else {
-      throw new Error("Unable to fetch from endpoint");
-    }
+    const url = new URL("/api/nfts", "https://console.sokos.io");
+
+    const query = {
+      and: [
+        {
+          tokenId: { equals: tokenId.toString() },
+          and: [{ "token.address": { equals: tokenAddress } }],
+        },
+      ],
+    };
+
+    const stringifiedQuery = QueryString.stringify(
+      { where: query },
+      { addQueryPrefix: true }
+    );
+    const fullUrl = `${url.toString()}${stringifiedQuery}`;
+
+    const response = await fetch(fullUrl);
+
+    const data = (await response.json()) as any;
+
+    if (!data.totalDocs) throw new Error("no data found for token " + data);
+
+    const fullNft = data.docs[0];
+
+    const metadata: NftMetadata = {
+      image: fullNft.metadata.image.url,
+      name: fullNft.metadata.title,
+      tokenUrl: fullNft.metadata.uri,
+      description: fullNft.metadata.description,
+      attributes: fullNft.metadata.attributes,
+      isPhygital: fullNft.metadata.isPhygital,
+      standard: fullNft.token.standard,
+      supply: fullNft.supply,
+    };
+    return metadata;
   } catch (e) {
-    context.log.warn(`Unable to fetch from ${endpoint}`);
+    logger.warn(`Unable to fetch metadata of ${tokenAddress}-${tokenId}`);
   }
   return null;
 }
 
-export async function tryFetchIpfsFile(
-  tokenId: string,
-  context: handlerContext
-): Promise<NftMetadata> {
+export const processTokenMetadata = async (
+  tokenAddress: string,
+  tokenId: BigInt,
+  logger: userLogger
+): Promise<NftMetadata> => {
   const cache = await NftCache.init();
-  const _metadata = await cache.read(tokenId);
-
+  const _metadata = await cache.read(`${tokenAddress}-${tokenId.toString()}`);
   if (_metadata) {
-    return _metadata;
+    return { ..._metadata };
   }
 
-  const endpoints = [
-    process.env.PINATA_IPFS_GATEWAY || "",
-    "https://cloudflare-ipfs.com/ipfs",
-    "https://ipfs.io/ipfs",
-  ];
+  const metadata = await fetchFromEndpoint(
+    tokenAddress,
+    tokenId.toString(),
+    logger
+  );
 
-  for (const endpoint of endpoints) {
-    const metadata = await fetchFromEndpoint(endpoint, tokenId, context);
-    if (metadata) {
-      await cache.add(tokenId, metadata);
-      return metadata;
-    }
+  if (metadata) {
+    await cache.add(`${tokenAddress}-${tokenId.toString()}`, metadata);
+    return metadata;
   }
 
-  context.log.error("Unable to fetch from all endpoints"); // could do something more here depending on use case
-  return { attributes: ["unknown"], image: "unknown" };
-}
+  return {
+    image: "unknown",
+    name: "unknown",
+    tokenUrl: "unknown",
+    description: "unknown",
+    attributes: ["unknown"],
+    isPhygital: "unknown",
+    standard: "unknown",
+    supply: "unknown",
+  };
+};

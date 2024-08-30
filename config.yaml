@@ -1,5 +1,5 @@
 name: sokos-indexer
-
+ecosystem: evm
 networks:
   - id: 137
     start_block: 0

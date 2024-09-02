@@ -7,7 +7,7 @@ type eventName = string
 
 type contract = {
   abi: aliasAbi,
-  addresses: array<Ethers.ethAddress>,
+  addresses: array<Address.t>,
   events: array<eventName>,
 }
 
@@ -15,10 +15,10 @@ type configYaml = {
   syncSource: aliasSyncSource,
   startBlock: int,
   confirmedBlockThreshold: int,
-  contracts: Js.Dict.t<contract>,
+  contracts: dict<contract>,
 }
 
-let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig => {
+let mapChainConfigToConfigYaml = (chainConfig: Config.chainConfig): configYaml => {
   {
     syncSource: chainConfig.syncSource,
     startBlock: chainConfig.startBlock,
@@ -30,7 +30,10 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
           {
             abi: contract.abi,
             addresses: contract.addresses,
-            events: Belt.Array.map(contract.events, event => event->Types.eventNameToString),
+            events: contract.events->Belt.Array.map(event => {
+              let module(Event) = event
+              Event.name
+            }),
           },
         )
       }),
@@ -39,7 +42,7 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
 }
 
 @genType
-let getConfigByChainId: int => configYaml = chainId =>
-  Config.getConfig(
-    Belt.Result.getExn(ChainMap.Chain.fromChainId(chainId)),
-  )->mapChainConfigToConfigYaml
+let getGeneratedByChainId: int => configYaml = chainId => {
+  let config = Config.getGenerated()
+  config.chainMap->ChainMap.get(config->Config.getChain(~chainId))->mapChainConfigToConfigYaml
+}

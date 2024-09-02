@@ -1,6 +1,6 @@
 export {
-  FactoryContract,
-  SokosERC721Contract,
+  Factory,
+  SokosERC721,
 } from "./src/Handlers.gen";
 export type * from "./src/Types.gen";
 import {

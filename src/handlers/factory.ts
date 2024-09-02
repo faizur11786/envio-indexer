@@ -1,13 +1,15 @@
-import { CollectionEntity, FactoryContract } from "generated";
+require("dotenv").config();
+
+import { Collection, Factory } from "generated";
 
 export const LOG_LEVEL = "trace";
 
-FactoryContract.CollectionDeployed.loader(({ event, context }) => {
-  context.contractRegistration.addSokosERC721(event.params.tokenAddress);
+Factory.CollectionDeployed.contractRegister(({ event, context }) => {
+  context.addSokosERC721(event.params.tokenAddress);
 });
 
-FactoryContract.CollectionDeployed.handler(({ event, context }) => {
-  const entity: CollectionEntity = {
+Factory.CollectionDeployed.handler(async ({ event, context }) => {
+  const entity: Collection = {
     id: event.params.tokenAddress,
     contractAddress: event.params.tokenAddress,
     isERC1155: event.params.isERC1155,

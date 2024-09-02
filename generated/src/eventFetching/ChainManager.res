@@ -1,10 +1,9 @@
 open Belt
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
-  //The priority queue should only house the latest event from each chain
-  //And potentially extra events that are pushed on by newly registered dynamic
-  //contracts which missed being fetched by they chainFetcher
-  arbitraryEventPriorityQueue: list<Types.eventBatchQueueItem>,
+  //Holds arbitrary events that were added when a batch ended processing early
+  //due to contract registration. Ordered from latest to earliest
+  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
   isUnorderedMultichainMode: bool,
 }
 
@@ -20,12 +19,12 @@ let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
 
 type multiChainEventComparitor = {
   chain: ChainMap.Chain.t,
-  earliestEventResponse: FetchState.earliestEventResponse,
+  earliestEvent: FetchState.queueItem,
 }
 
 let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
   switch earliestQueueItem {
-  | Item(i) => i->getComparitorFromItem
+  | Item({item}) => item->getComparitorFromItem
   | NoItem({blockTimestamp, blockNumber}) => (
       blockTimestamp,
       chain->ChainMap.Chain.toChainId,
@@ -44,8 +43,8 @@ let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatch
 }
 
 let isQueueItemEarlier = (a: multiChainEventComparitor, b: multiChainEventComparitor): bool => {
-  a.earliestEventResponse.earliestQueueItem->getQueueItemComparitor(~chain=a.chain) <
-    b.earliestEventResponse.earliestQueueItem->getQueueItemComparitor(~chain=b.chain)
+  a.earliestEvent->getQueueItemComparitor(~chain=a.chain) <
+    b.earliestEvent->getQueueItemComparitor(~chain=b.chain)
 }
 
 // This is similar to `chainFetcherPeekComparitorEarliestEvent`, but it prioritizes events over `NoItem` no matter what the timestamp of `NoItem` is.
@@ -53,7 +52,7 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
   a: multiChainEventComparitor,
   b: multiChainEventComparitor,
 ): bool => {
-  switch (a.earliestEventResponse.earliestQueueItem, b.earliestEventResponse.earliestQueueItem) {
+  switch (a.earliestEvent, b.earliestEvent) {
   | (Item(_), NoItem(_)) => true
   | (NoItem(_), Item(_)) => false
   | _ => isQueueItemEarlier(a, b)
@@ -63,8 +62,8 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
 type noItemsInArray = NoItemsInArray
 
 let determineNextEvent = (
+  fetchStatesMap: ChainMap.t<PartitionedFetchState.t>,
   ~isUnorderedMultichainMode: bool,
-  fetchStatesMap: ChainMap.t<FetchState.t>,
 ): result<multiChainEventComparitor, noItemsInArray> => {
   let comparitorFunction = if isUnorderedMultichainMode {
     chainFetcherPeekComparitorEarliestEventPrioritizeEvents
@@ -75,11 +74,11 @@ let determineNextEvent = (
   let nextItem =
     fetchStatesMap
     ->ChainMap.entries
-    ->Array.reduce(None, (accum, (chain, fetchState)) => {
+    ->Array.reduce(None, (accum, (chain, partitionedFetchState)) => {
       // If the fetch state has reached the end block we don't need to consider it
-      if fetchState->FetchState.isActivelyIndexing {
-        let earliestEventResponse = fetchState->FetchState.getEarliestEvent
-        let cmpA: multiChainEventComparitor = {chain, earliestEventResponse}
+      switch partitionedFetchState->PartitionedFetchState.getEarliestEvent {
+      | Some(earliestEvent) =>
+        let cmpA: multiChainEventComparitor = {chain, earliestEvent}
         switch accum {
         | None => cmpA
         | Some(cmpB) =>
@@ -89,8 +88,7 @@ let determineNextEvent = (
             cmpA
           }
         }->Some
-      } else {
-        accum
+      | None => accum
       }
     })
 
@@ -100,29 +98,30 @@ let determineNextEvent = (
   }
 }
 
-let makeFromConfig = (~configs: Config.chainConfigs): t => {
-  let chainFetchers = configs->ChainMap.map(ChainFetcher.makeFromConfig)
+let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
+  let chainFetchers =
+    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
   {
     chainFetchers,
-    arbitraryEventPriorityQueue: list{},
-    isUnorderedMultichainMode: Config.isUnorderedMultichainMode,
+    arbitraryEventQueue: [],
+    isUnorderedMultichainMode: config.isUnorderedMultichainMode,
   }
 }
 
-let makeFromDbState = async (~configs: Config.chainConfigs): t => {
+let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchersArr =
-    await configs
+    await config.chainMap
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      (chain, await chainConfig->ChainFetcher.makeFromDbState)
+      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition))
     })
     ->Promise.all
 
-  let chainFetchers = ChainMap.fromArray(chainFetchersArr)->Utils.unwrapResultExn //Can safely unwrap since it is being mapped from Config
+  let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
-    isUnorderedMultichainMode: Config.isUnorderedMultichainMode,
-    arbitraryEventPriorityQueue: list{},
+    isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+    arbitraryEventQueue: [],
     chainFetchers,
   }
 }
@@ -187,41 +186,29 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
   }
 }
 
-type earliestQueueItem =
-  | ArbitraryEventQueue(Types.eventBatchQueueItem, list<Types.eventBatchQueueItem>)
-  | EventFetchers(Types.eventBatchQueueItem, ChainMap.t<FetchState.t>)
+let getFirstArbitraryEventsItemForChain = (queue: array<Types.eventBatchQueueItem>, ~chain) =>
+  queue
+  ->Utils.Array.findReverseWithIndex((item: Types.eventBatchQueueItem) => {
+    item.chain == chain
+  })
+  ->Option.map(((item, index)) => {
+    FetchState.item,
+    popItemOffQueue: () => queue->Utils.Array.spliceInPlace(~pos=index, ~remove=1)->ignore,
+  })
 
-let rec getFirstArbitraryEventsItemForChain = (
-  ~revHead=list{},
-  ~chain,
-  queue: list<Types.eventBatchQueueItem>,
-) => {
-  switch queue {
-  | list{} => None
-  | list{first, ...tail} =>
-    if first.chain == chain {
-      let rest = revHead->List.reverseConcat(tail)
-      Some((first, rest))
-    } else {
-      tail->getFirstArbitraryEventsItemForChain(~chain, ~revHead=list{first, ...revHead})
-    }
-  }
-}
-
-let getFirstArbitraryEventsItem = (queue: list<Types.eventBatchQueueItem>) =>
-  switch queue {
-  | list{} => None
-  | list{first, ...tail} => Some((first, tail))
-  }
+let getFirstArbitraryEventsItem = (queue: array<Types.eventBatchQueueItem>) =>
+  queue
+  ->Utils.Array.last
+  ->Option.map(item => {FetchState.item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
 
 let popBatchItem = (
-  ~fetchStatesMap: ChainMap.t<FetchState.t>,
-  ~arbitraryEventQueue: list<Types.eventBatchQueueItem>,
+  ~fetchStatesMap: ChainMap.t<PartitionedFetchState.t>,
+  ~arbitraryEventQueue: array<Types.eventBatchQueueItem>,
   ~isUnorderedMultichainMode,
-): option<earliestQueueItem> => {
+): option<FetchState.itemWithPopFn> => {
   //Compare the peeked items and determine the next item
   switch fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode) {
-  | Ok({chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}}) =>
+  | Ok({chain, earliestEvent}) =>
     let maybeArbItem = if isUnorderedMultichainMode {
       arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain)
     } else {
@@ -230,25 +217,17 @@ let popBatchItem = (
     switch maybeArbItem {
     //If there is item on the arbitray events queue, and it is earlier than
     //than the earlist event, take the item off from there
-    | Some((qItem, updatedArbQueue))
-      if Item(qItem)->getQueueItemComparitor(~chain=qItem.chain) <
-        earliestQueueItem->getQueueItemComparitor(~chain) =>
-      Some(ArbitraryEventQueue(qItem, updatedArbQueue))
+    | Some(itemWithPopFn)
+      if Item(itemWithPopFn)->getQueueItemComparitor(~chain=itemWithPopFn.item.chain) <
+        earliestEvent->getQueueItemComparitor(~chain) =>
+      Some(itemWithPopFn)
     | _ =>
-      //Otherwise take the latest item from the fetchers
-      switch earliestQueueItem {
+      switch earliestEvent {
       | NoItem(_) => None
-      | Item(qItem) =>
-        let updatedFetchStatesMap = fetchStatesMap->ChainMap.set(chain, updatedFetchState)
-        EventFetchers(qItem, updatedFetchStatesMap)->Some
+      | Item(itemWithPopFn) => Some(itemWithPopFn)
       }
     }
-  | Error(NoItemsInArray) =>
-    arbitraryEventQueue
-    ->getFirstArbitraryEventsItem
-    ->Option.map(((qItem, updatedArbQueue)) => {
-      ArbitraryEventQueue(qItem, updatedArbQueue)
-    })
+  | Error(NoItemsInArray) => arbitraryEventQueue->getFirstArbitraryEventsItem
   }
 }
 
@@ -256,99 +235,80 @@ let popBatchItem = (
 Simply calls popBatchItem in isolation using the chain manager without
 the context of a batch
 */
-let peakNextBatchItem = (self: t): option<earliestQueueItem> => {
+let nextItemIsNone = (self: t): bool => {
   popBatchItem(
     ~fetchStatesMap=self.chainFetchers->ChainMap.map(cf => cf.fetchState),
-    ~arbitraryEventQueue=self.arbitraryEventPriorityQueue,
+    ~arbitraryEventQueue=self.arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
-  )
+  )->Option.isNone
 }
 
 type batchRes = {
-  batch: list<Types.eventBatchQueueItem>,
-  batchSize: int,
-  fetchStatesMap: ChainMap.t<FetchState.t>,
-  arbitraryEventQueue: list<Types.eventBatchQueueItem>,
+  batch: array<Types.eventBatchQueueItem>,
+  fetchStatesMap: ChainMap.t<PartitionedFetchState.t>,
+  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
 }
 
-let makeBatch = (~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue) => {
-  batch: batchRev->List.reverse,
-  fetchStatesMap,
-  arbitraryEventQueue,
-  batchSize: currentBatchSize,
-}
-
-let rec createBatchInternal = (
+let createBatchInternal = (
   ~maxBatchSize,
-  ~currentBatchSize,
-  ~fetchStatesMap,
+  ~fetchStatesMap: ChainMap.t<PartitionedFetchState.t>,
   ~arbitraryEventQueue,
-  ~batchRev,
   ~isUnorderedMultichainMode,
 ) => {
-  if currentBatchSize >= maxBatchSize {
-    makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
-  } else {
-    switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue, ~isUnorderedMultichainMode) {
-    | None => makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
-    | Some(item) =>
-      let (arbitraryEventQueue, fetchStatesMap, nextItem) = switch item {
-      | ArbitraryEventQueue(item, arbitraryEventQueue) => (
-          arbitraryEventQueue,
-          fetchStatesMap,
-          item,
-        )
-      | EventFetchers(item, fetchStatesMap) => (arbitraryEventQueue, fetchStatesMap, item)
+  let batch = []
+  let rec loop = () =>
+    if batch->Array.length >= maxBatchSize {
+      batch
+    } else {
+      switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue, ~isUnorderedMultichainMode) {
+      | None => batch
+      | Some({item, popItemOffQueue}) =>
+        popItemOffQueue()
+        batch->Js.Array2.push(item)->ignore
+        loop()
       }
-      createBatchInternal(
-        //TODO make this use a list with reverse rather than array concat
-        ~batchRev=list{nextItem, ...batchRev},
-        ~maxBatchSize,
-        ~arbitraryEventQueue,
-        ~fetchStatesMap,
-        ~currentBatchSize=currentBatchSize + 1,
-        ~isUnorderedMultichainMode,
-      )
     }
-  }
+  loop()
 }
 
 let createBatch = (self: t, ~maxBatchSize: int) => {
   let refTime = Hrtime.makeTimer()
 
-  let {arbitraryEventPriorityQueue, chainFetchers} = self
-  let fetchStatesMap = chainFetchers->ChainMap.map(cf => cf.fetchState)
+  let {arbitraryEventQueue, chainFetchers} = self
+  //Make a copy of the queues and fetch states since we are going to mutate them
+  let arbitraryEventQueue = arbitraryEventQueue->Array.copy
+  let fetchStatesMap = chainFetchers->ChainMap.map(cf => cf.fetchState->PartitionedFetchState.copy)
 
-  let response = createBatchInternal(
+  let batch = createBatchInternal(
     ~maxBatchSize,
-    ~batchRev=list{},
-    ~currentBatchSize=0,
     ~fetchStatesMap,
-    ~arbitraryEventQueue=arbitraryEventPriorityQueue,
+    ~arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
   )
 
-  if response.batchSize > 0 {
+  let batchSize = batch->Array.length
+
+  if batchSize > 0 {
     let fetchedEventsBuffer =
       chainFetchers
       ->ChainMap.values
       ->Array.map(fetcher => (
         fetcher.chainConfig.chain->ChainMap.Chain.toString,
-        fetcher.fetchState->FetchState.queueSize,
+        fetcher.fetchState->PartitionedFetchState.queueSize,
       ))
-      ->Array.concat([("arbitrary", self.arbitraryEventPriorityQueue->List.size)])
+      ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray
 
     let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis
 
     Logging.trace({
       "message": "New batch created for processing",
-      "batch size": response.batchSize,
+      "batch size": batchSize,
       "buffers": fetchedEventsBuffer,
       "time taken (ms)": timeElapsed,
     })
 
-    Some(response)
+    Some({batch, fetchStatesMap, arbitraryEventQueue})
   } else {
     None
   }

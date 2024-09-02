@@ -1,8 +1,8 @@
 type contract = {
   name: string,
   abi: Ethers.abi,
-  addresses: array<Ethers.ethAddress>,
-  events: array<Types.eventName>,
+  addresses: array<Address.t>,
+  events: array<module(Types.Event)>,
 }
 
 type syncConfig = {
@@ -14,21 +14,20 @@ type syncConfig = {
   queryTimeoutMillis: int,
 }
 
-type serverUrl = string
-
+type hyperSyncConfig = {endpointUrl: string}
+type hyperFuelConfig = {endpointUrl: string}
 type rpcConfig = {
   provider: Ethers.JsonRpcProvider.t,
   syncConfig: syncConfig,
 }
 
-/**
-A generic type where for different values of HyperSync and Rpc.
-Where first param 'a represents the value for hypersync and the second
-param 'b for rpc
-*/
-type source<'a, 'b> = HyperSync('a) | Rpc('b)
+type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
 
-type syncSource = source<serverUrl, rpcConfig>
+let usesHyperSync = syncSource =>
+  switch syncSource {
+  | HyperSync(_) | HyperFuel(_) => true
+  | Rpc(_) => false
+  }
 
 type chainConfig = {
   syncSource: syncSource,
@@ -37,63 +36,13 @@ type chainConfig = {
   confirmedBlockThreshold: int,
   chain: ChainMap.Chain.t,
   contracts: array<contract>,
+  chainWorker: module(ChainWorker.S),
 }
-
-type chainConfigs = ChainMap.t<chainConfig>
 
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
 
-let makeHistoryConfig = (~shouldRollbackOnReorg, ~shouldSaveFullHistory) => {
-  rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
-  historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
-}
-
-let historyConfig = makeHistoryConfig(~shouldRollbackOnReorg=false, ~shouldSaveFullHistory=false)
-
-let shouldRollbackOnReorg = switch historyConfig {
-| {rollbackFlag: RollbackOnReorg} => true
-| _ => false
-}
-
-let shouldSaveHistory = switch historyConfig {
-| {rollbackFlag: RollbackOnReorg} | {historyFlag: FullHistory} => true
-| _ => false
-}
-
-let shouldPruneHistory = switch historyConfig {
-| {historyFlag: MinHistory} => true
-| _ => false
-}
-
-/**
-Determines whether to use HypersyncClient Decoder or Viem for parsing events
-Default is hypersync client decoder, configurable in config with:
-```yaml
-event_decoder: "viem" || "hypersync-client"
-```
-*/
-let shouldUseHypersyncClientDecoder =
-  Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(true)
-
-let isUnorderedMultichainMode =
-  Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(false),
-  )
-
-let db: Postgres.poolConfig = {
-  host: Env.Db.host,
-  port: Env.Db.port,
-  username: Env.Db.user,
-  password: Env.Db.password,
-  database: Env.Db.database,
-  ssl: Env.Db.ssl,
-  // TODO: think how we want to pipe these logs to pino.
-  onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
-  transform: {undefined: Null},
-  max: 2,
-}
 
 let getSyncConfig = ({
   initialBlockInterval,
@@ -124,31 +73,97 @@ let getSyncConfig = ({
   queryTimeoutMillis,
 }
 
-let getConfig = (chain: ChainMap.Chain.t) =>
-  switch chain {
-  | Chain_137 => {
-      confirmedBlockThreshold: 200,
-      syncSource: HyperSync("https://polygon.hypersync.xyz"),
-      startBlock: 0,
-      endBlock: None,
-      chain: Chain_137,
-      contracts: [
-        {
-          name: "Factory",
-          abi: Abis.factoryAbi->Ethers.makeAbi,
-          addresses: [
-            "0xE1eB832df4FE2e15df1ac8777fAfC897866caB21"->Ethers.getAddressFromStringUnsafe,
-          ],
-          events: [Factory_CollectionDeployed],
+type t = {
+  historyConfig: historyConfig,
+  isUnorderedMultichainMode: bool,
+  chainMap: ChainMap.t<chainConfig>,
+  defaultChain: option<chainConfig>,
+  events: dict<module(Types.InternalEvent)>,
+  enableRawEvents: bool,
+  entities: array<module(Entities.InternalEntity)>,
+}
+
+let make = (
+  ~shouldRollbackOnReorg=true,
+  ~shouldSaveFullHistory=false,
+  ~isUnorderedMultichainMode=false,
+  ~chains=[],
+  ~enableRawEvents=false,
+  ~entities=[],
+) => {
+  let events = Js.Dict.empty()
+  chains->Js.Array2.forEach(chainConfig => {
+    chainConfig.contracts->Js.Array2.forEach(contract => {
+      contract.events->Js.Array2.forEach(
+        eventMod => {
+          let eventMod = eventMod->Types.eventModWithoutArgTypeToInternal
+          let module(Event) = eventMod
+          events->Js.Dict.set(Event.key, eventMod)
         },
-        {
-          name: "SokosERC721",
-          abi: Abis.sokosERC721Abi->Ethers.makeAbi,
-          addresses: [],
-          events: [SokosERC721_Transfer],
-        },
-      ],
-    }
+      )
+    })
+  })
+  {
+    historyConfig: {
+      rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
+      historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
+    },
+    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
+      Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+        isUnorderedMultichainMode,
+      ),
+    ),
+    chainMap: chains
+    ->Js.Array2.map(n => {
+      (n.chain, n)
+    })
+    ->ChainMap.fromArrayUnsafe,
+    defaultChain: chains->Belt.Array.get(0),
+    events,
+    enableRawEvents,
+    entities: entities->(
+      Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
+    ),
+  }
+}
+
+%%private(let generatedConfigRef = ref(None))
+
+let getGenerated = () =>
+  switch generatedConfigRef.contents {
+  | Some(c) => c
+  | None => Js.Exn.raiseError("Config not yet generated")
   }
 
-let config: chainConfigs = ChainMap.make(getConfig)
+let setGenerated = (config: t) => {
+  generatedConfigRef := Some(config)
+}
+
+let shouldRollbackOnReorg = config =>
+  switch config.historyConfig {
+  | {rollbackFlag: RollbackOnReorg} => true
+  | _ => false
+  }
+
+let shouldPruneHistory = config =>
+  switch config.historyConfig {
+  | {historyFlag: MinHistory} => true
+  | _ => false
+  }
+
+let getChain = (config, ~chainId) => {
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
+  config.chainMap->ChainMap.has(chain)
+    ? chain
+    : Js.Exn.raiseError(
+        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
+      )
+}
+
+let getEventModOrThrow = (config, ~contractName, ~topic0) => {
+  let key = `${contractName}_${topic0}`
+  switch config.events->Js.Dict.get(key) {
+  | Some(event) => event
+  | None => Js.Exn.raiseError("No registered event found with key " ++ key)
+  }
+}

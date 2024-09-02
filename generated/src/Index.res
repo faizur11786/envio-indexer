@@ -1,5 +1,3 @@
-// %%raw(`globalThis.fetch = require('node-fetch')`)
-
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
  */
@@ -69,12 +67,15 @@ type mainArgs = Yargs.parsedArgs<args>
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   open Belt
   {
+    config: globalState.config,
     indexerStartTime: globalState.indexerStartTime,
     chains: globalState.chainManager.chainFetchers
     ->ChainMap.values
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
-      let latestFetchedBlockNumber = FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber
+      let latestFetchedBlockNumber = PartitionedFetchState.getLatestFullyFetchedBlock(
+        fetchState,
+      ).blockNumber
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
@@ -86,12 +87,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         // if there's chains that have no events in the block range start->end,
         // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
         // This ensures TUI still displays synced in this case
-        let {
-          firstEventBlockNumber,
-          latestProcessedBlock,
-          timestampCaughtUpToHeadOrEndblock,
-          numEventsProcessed,
-        } = cf
+        let {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock, numEventsProcessed} = cf
+
+        let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
+
         Synced({
           firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
           latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
@@ -101,12 +100,14 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           numEventsProcessed,
         })
       } else {
-        switch cf {
-        | {
-            firstEventBlockNumber: Some(firstEventBlockNumber),
-            latestProcessedBlock,
-            timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-          } =>
+        switch (cf, cf->ChainFetcher.getFirstEventBlockNumber) {
+        | (
+            {
+              latestProcessedBlock,
+              timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
+            },
+            Some(firstEventBlockNumber),
+          ) =>
           let latestProcessedBlock =
             latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
           Synced({
@@ -115,11 +116,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
             timestampCaughtUpToHeadOrEndblock,
             numEventsProcessed,
           })
-        | {
-            firstEventBlockNumber: Some(firstEventBlockNumber),
-            latestProcessedBlock,
-            timestampCaughtUpToHeadOrEndblock: None,
-          } =>
+        | (
+            {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock: None},
+            Some(firstEventBlockNumber),
+          ) =>
           let latestProcessedBlock =
             latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
           Syncing({
@@ -127,7 +127,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
             latestProcessedBlock,
             numEventsProcessed,
           })
-        | {firstEventBlockNumber: None} => SearchingForEvents
+        | (_, None) => SearchingForEvents
         }
       }
 
@@ -139,8 +139,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           numBatchesFetched,
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
-          isHyperSync: switch cf.chainConfig.syncSource {
-          | HyperSync(_) => true
+          poweredByHyperSync: switch cf.chainConfig.syncSource {
+          | HyperSync(_)
+          | HyperFuel(_) => true
           | Rpc(_) => false
           },
         }: EnvioInkApp.chainData
@@ -151,13 +152,12 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
 
 let main = async () => {
   try {
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
-    // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
-
-    let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let chainManager = await ChainManager.makeFromDbState(~config)
+    let loadLayer = LoadLayer.makeWithDbConnection()
+    let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)

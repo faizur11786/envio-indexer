@@ -1,5 +1,3 @@
-open Belt
-
 /***** TAKE NOTE ******
 This is a hack to get genType to work!
 
@@ -40,13 +38,13 @@ module Addresses = {
   include TestHelpers_MockAddresses
 }
 
-module EventFunctions = {
-  //Note these are made into a record to make operate in the same way
-  //for Res, JS and TS.
 
+module EventFunctions = {
   /**
   The arguements that get passed to a "processEvent" helper function
   */
+  //Note these are made into a record to make operate in the same way
+  //for Res, JS and TS.
   @genType
   type eventProcessorArgs<'eventArgs> = {
     event: Types.eventLog<'eventArgs>,
@@ -55,51 +53,34 @@ module EventFunctions = {
   }
 
   /**
-  The default chain ID to use (ethereum mainnet) if a user does not specify int the 
-  eventProcessor helper
-  */
-  let \"DEFAULT_CHAIN_ID" = try {
-    ChainMap.Chain.all->Array.getExn(0)->ChainMap.Chain.toChainId
-  } catch {
-  | _ =>
-    Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml.")
-  }
-
-  /**
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    ~contextCreator: Context.contextCreator<
-      'eventArgs,
-      'loaderContext,
-      'handlerContextSync,
-      'handlerContextAsync,
-    >,
-    ~getLoader: unit => Handlers.loader<_>,
-    ~eventWithContextAccessor: (
-      Types.eventLog<'eventArgs>,
-      Context.genericContextCreatorFunctions<
-        'loaderContext,
-        'handlerContextSync,
-        'handlerContextAsync,
-      >,
-    ) => Context.eventAndContext,
-    ~eventName: Types.eventName,
-    ~cb: TestHelpers_MockDb.t => unit,
+    ~eventMod: module(Types.Event with type eventArgs = 'eventArgs),
   ) => {
-    ({event, mockDb, ?chainId}) => {
-      RegisterHandlers.registerAllHandlers()
-      //The user can specify a chainId of an event or leave it off
-      //and it will default to "DEFAULT_CHAIN_ID"
-      let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
+    async (args) => {
+      let eventMod = eventMod->Types.eventModToInternal
+      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>)
+      let module(Event) = eventMod
+      let config = RegisterHandlers.registerAllHandlers()
+
+      // The user can specify a chainId of an event or leave it off
+      // and it will default to the first chain in the config
+      let chain = switch chainId {
+        | Some(chainId) => {
+          config->Config.getChain(~chainId)
+        }
+        | None => switch config.defaultChain {
+          | Some(chainConfig) => chainConfig.chain
+          | None => Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml")
+        }
+      }
 
       //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
-          "Context": `Test Processor for ${eventName
-            ->S.serializeToJsonStringWith(. Types.eventNameSchema)
-            ->Result.getExn} Event`,
-          "Chain ID": chainId,
+          "Context": `Test Processor for "${Event.name}" event on contract "${Event.contractName}"`,
+          "Chain ID": chain->ChainMap.Chain.toChainId,
           "event": event,
         },
       )
@@ -109,145 +90,107 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      let asyncGetters: Context.entityGetters = {
-        getAccount: async id =>
-          mockDbClone.entities.account.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-        getCollection: async id =>
-          mockDbClone.entities.collection.get(id)->Belt.Option.mapWithDefault([], entity => [
-            entity,
-          ]),
-        getFactory_CollectionDeployed: async id =>
-          mockDbClone.entities.factory_CollectionDeployed.get(id)->Belt.Option.mapWithDefault(
-            [],
-            entity => [entity],
-          ),
-        getNft: async id =>
-          mockDbClone.entities.nft.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-        getSokosERC721_Transfer: async id =>
-          mockDbClone.entities.sokosERC721_Transfer.get(id)->Belt.Option.mapWithDefault(
-            [],
-            entity => [entity],
-          ),
+      let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventMod) {
+      | Some(l) => l
+      | None =>
+        Not_found->ErrorHandling.mkLogAndRaise(
+          ~logger,
+          ~msg=`No registered handler found for "${Event.name}" on contract "${Event.contractName}"`,
+        )
       }
-
       //Construct a new instance of an in memory store to run for the given event
-      let inMemoryStore = IO.InMemoryStore.make()
+      let inMemoryStore = InMemoryStore.make()
+      let loadLayer = LoadLayer.make(
+        ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
+        ~makeLoadEntitiesByField=(~entityMod) => TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
+      )
 
-      //Construct a context with the inMemory store for the given event to run
-      //loaders and handlers
-      let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger, ~asyncGetters)
+      //No need to check contract is registered or return anything.
+      //The only purpose is to test the registerContract function and to
+      //add the entity to the in memory store for asserting registrations
 
-      let loaderContext = context.getLoaderContext()
-
-      let loader = getLoader()
-
-      //Run the loader, to get all the read values/contract registrations
-      //into the context
-      loader({event, context: loaderContext})
-
-      //Get all the entities are requested to be loaded from the mockDB
-      let entityBatch = context.getEntitiesToLoad()
-
-      //Load requested entities from the cloned mockDb into the inMemoryStore
-      mockDbClone->TestHelpers_MockDb.loadEntitiesToInMemStore(~entityBatch, ~inMemoryStore)
-
-      //Run the event and handler context through the eventRouter
-      //With inMemoryStore
-      let eventAndContext: Context.eventRouterEventAndContext = {
-        chainId,
-        event: eventWithContextAccessor(event, context),
+      switch registeredEvent.contractRegister {
+      | Some(contractRegister) =>
+        switch contractRegister->EventProcessing.runEventContractRegister(
+          ~logger,
+          ~event,
+          ~eventBatchQueueItem={
+            event,
+            eventMod,
+            chain,
+            logIndex: event.logIndex,
+            timestamp: event.block.timestamp,
+            blockNumber: event.block.number,
+          },
+          ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
+            false,
+          ~dynamicContractRegistrations=None,
+          ~inMemoryStore,
+        ) {
+        | Ok(_) => ()
+        | Error(e) => e->ErrorHandling.logAndRaise
+        }
+      | None => () //No need to run contract registration
       }
 
-      eventAndContext->EventProcessing.eventRouter(
-        ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
-        ~inMemoryStore,
-        ~cb=res =>
-          switch res {
-          | Ok(_latestProcessedBlocks) =>
-            //Now that the processing is finished. Simulate writing a batch
-            //(Although in this case a batch of 1 event only) to the cloned mockDb
-            mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty(~config)
 
-            //Return the cloned mock db
-            cb(mockDbClone)
+      switch registeredEvent.loaderHandler {
+      | Some(handler) =>
+        switch await event->EventProcessing.runEventHandler(
+          ~inMemoryStore,
+          ~loadLayer,
+          ~handler,
+          ~eventMod,
+          ~chain,
+          ~logger,
+          ~latestProcessedBlocks,
+          ~config,
+        ) {
+        | Ok(_) => ()
+        | Error(e) => e->ErrorHandling.logAndRaise
+        }
+      | None => ()//No need to run loaders or handlers
+      }
 
-          | Error(errHandler) =>
-            errHandler->ErrorHandling.log
-            errHandler->ErrorHandling.raiseExn
-          },
-      )
+      //In mem store can still contatin raw events and dynamic contracts for the
+      //testing framework in cases where either contract register or loaderHandler
+      //is None
+      mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      mockDbClone
     }
   }
 
-  /**Creates a mock event processor, wrapping the callback in a Promise for async use*/
-  let makeAsyncEventProcessor = (
-    ~contextCreator,
-    ~getLoader,
-    ~eventWithContextAccessor,
-    ~eventName,
-    eventProcessorArgs,
-  ) => {
-    Promise.make((res, _rej) => {
-      makeEventProcessor(
-        ~contextCreator,
-        ~getLoader,
-        ~eventWithContextAccessor,
-        ~eventName,
-        ~cb=mockDb => res(. mockDb),
-        eventProcessorArgs,
-      )
-    })
-  }
+  module MockBlock = {
+    open Belt
+    type t = {
+      number?: int,
+      timestamp?: int,
+      hash?: string,
+    }
 
-  /**
-  Creates a mock event processor, exposing the return of the callback in the return,
-  raises an exception if the handler is async
-  */
-  let makeSyncEventProcessor = (
-    ~contextCreator,
-    ~getLoader,
-    ~eventWithContextAccessor,
-    ~eventName,
-    eventProcessorArgs,
-  ) => {
-    //Dangerously set to None, nextMockDb will be set in the callback
-    let nextMockDb = ref(None)
-    makeEventProcessor(
-      ~contextCreator,
-      ~getLoader,
-      ~eventWithContextAccessor,
-      ~eventName,
-      ~cb=mockDb => nextMockDb := Some(mockDb),
-      eventProcessorArgs,
-    )
-
-    //The callback is called synchronously so nextMockDb should be set.
-    //In the case it's not set it would mean that the user is using an async handler
-    //in which case we want to error and alert the user.
-    switch nextMockDb.contents {
-    | Some(mockDb) => mockDb
-    | None =>
-      Js.Exn.raiseError(
-        "processEvent failed because handler is not synchronous, please use processEventAsync instead",
-      )
+    let toBlock = (mock: t): Types.Block.t => {
+      number: mock.number->Option.getWithDefault(0),
+      timestamp: mock.timestamp->Option.getWithDefault(0),
+      hash: mock.hash->Option.getWithDefault("foo"),
     }
   }
 
-  /**
-  Optional params for all additional data related to an eventLog
-  */
+  module MockTransaction = {
+    type t = {
+    }
+
+    let toTransaction = (_mock: t): Types.Transaction.t => {
+    }
+  }
+
   @genType
   type mockEventData = {
-    blockNumber?: int,
-    blockTimestamp?: int,
-    blockHash?: string,
     chainId?: int,
-    srcAddress?: Ethers.ethAddress,
-    transactionHash?: string,
-    transactionIndex?: int,
-    txOrigin?: option<Ethers.ethAddress>,
-    txTo?: option<Ethers.ethAddress>,
+    srcAddress?: Address.t,
     logIndex?: int,
+    block?: MockBlock.t,
+    transaction?: MockTransaction.t,
   }
 
   /**
@@ -257,134 +200,112 @@ module EventFunctions = {
     ~params: 'eventParams,
     ~mockEventData: option<mockEventData>,
   ): Types.eventLog<'eventParams> => {
-    let {
-      ?blockNumber,
-      ?blockTimestamp,
-      ?blockHash,
-      ?srcAddress,
-      ?chainId,
-      ?transactionHash,
-      ?transactionIndex,
-      ?logIndex,
-      ?txOrigin,
-      ?txTo,
-    } =
+    let {?block, ?transaction, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
-
+    let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
+    let transaction = transaction->Belt.Option.getWithDefault({})->MockTransaction.toTransaction
     {
       params,
-      txOrigin: txOrigin->Belt.Option.flatMap(i => i),
-      txTo: txTo->Belt.Option.flatMap(i => i),
+      transaction,
       chainId: chainId->Belt.Option.getWithDefault(1),
-      blockNumber: blockNumber->Belt.Option.getWithDefault(0),
-      blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
-      blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      block,
       srcAddress: srcAddress->Belt.Option.getWithDefault(Addresses.defaultAddress),
-      transactionHash: transactionHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-      transactionIndex: transactionIndex->Belt.Option.getWithDefault(0),
       logIndex: logIndex->Belt.Option.getWithDefault(0),
     }
   }
 }
 
+
 module Factory = {
   module CollectionDeployed = {
     @genType
-    let processEvent = EventFunctions.makeSyncEventProcessor(
-      ~contextCreator=Context.FactoryContract.CollectionDeployedEvent.contextCreator,
-      ~getLoader=Handlers.FactoryContract.CollectionDeployed.getLoader,
-      ~eventWithContextAccessor=(
-        event,
-        context,
-      ) => Context.FactoryContract_CollectionDeployedWithContext(event, context),
-      ~eventName=Types.Factory_CollectionDeployed,
-    )
-
-    @genType
-    let processEventAsync = EventFunctions.makeAsyncEventProcessor(
-      ~contextCreator=Context.FactoryContract.CollectionDeployedEvent.contextCreator,
-      ~getLoader=Handlers.FactoryContract.CollectionDeployed.getLoader,
-      ~eventWithContextAccessor=(
-        event,
-        context,
-      ) => Context.FactoryContract_CollectionDeployedWithContext(event, context),
-      ~eventName=Types.Factory_CollectionDeployed,
+    let processEvent = EventFunctions.makeEventProcessor(
+      ~eventMod=module(Types.Factory.CollectionDeployed),
     )
 
     @genType
     type createMockArgs = {
-      tokenAddress?: Ethers.ethAddress,
-      owner?: Ethers.ethAddress,
+      @as("tokenAddress")
+      tokenAddress?: Address.t,
+      @as("owner")
+      owner?: Address.t,
+      @as("isERC1155")
       isERC1155?: bool,
+      @as("name")
       name?: string,
+      @as("symbol")
       symbol?: string,
+      @as("uri")
       uri?: string,
       mockEventData?: EventFunctions.mockEventData,
     }
 
     @genType
     let createMockEvent = args => {
-      let {?tokenAddress, ?owner, ?isERC1155, ?name, ?symbol, ?uri, ?mockEventData} = args
+      let {
+        ?tokenAddress,
+        ?owner,
+        ?isERC1155,
+        ?name,
+        ?symbol,
+        ?uri,
+        ?mockEventData,
+      } = args
 
-      let params: Types.FactoryContract.CollectionDeployedEvent.eventArgs = {
-        tokenAddress: tokenAddress->Belt.Option.getWithDefault(
-          TestHelpers_MockAddresses.defaultAddress,
-        ),
-        owner: owner->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
-        isERC1155: isERC1155->Belt.Option.getWithDefault(false),
-        name: name->Belt.Option.getWithDefault("foo"),
-        symbol: symbol->Belt.Option.getWithDefault("foo"),
-        uri: uri->Belt.Option.getWithDefault("foo"),
+      let params: Types.Factory.CollectionDeployed.eventArgs = 
+      {
+       tokenAddress: tokenAddress->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
+       owner: owner->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
+       isERC1155: isERC1155->Belt.Option.getWithDefault(false),
+       name: name->Belt.Option.getWithDefault("foo"),
+       symbol: symbol->Belt.Option.getWithDefault("foo"),
+       uri: uri->Belt.Option.getWithDefault("foo"),
       }
 
       EventFunctions.makeEventMocker(~params, ~mockEventData)
     }
   }
+
 }
+
 
 module SokosERC721 = {
   module Transfer = {
     @genType
-    let processEvent = EventFunctions.makeSyncEventProcessor(
-      ~contextCreator=Context.SokosERC721Contract.TransferEvent.contextCreator,
-      ~getLoader=Handlers.SokosERC721Contract.Transfer.getLoader,
-      ~eventWithContextAccessor=(event, context) => Context.SokosERC721Contract_TransferWithContext(
-        event,
-        context,
-      ),
-      ~eventName=Types.SokosERC721_Transfer,
-    )
-
-    @genType
-    let processEventAsync = EventFunctions.makeAsyncEventProcessor(
-      ~contextCreator=Context.SokosERC721Contract.TransferEvent.contextCreator,
-      ~getLoader=Handlers.SokosERC721Contract.Transfer.getLoader,
-      ~eventWithContextAccessor=(event, context) => Context.SokosERC721Contract_TransferWithContext(
-        event,
-        context,
-      ),
-      ~eventName=Types.SokosERC721_Transfer,
+    let processEvent = EventFunctions.makeEventProcessor(
+      ~eventMod=module(Types.SokosERC721.Transfer),
     )
 
     @genType
     type createMockArgs = {
-      from?: Ethers.ethAddress,
-      to?: Ethers.ethAddress,
-      tokenId?: Ethers.BigInt.t,
+      @as("from")
+      from?: Address.t,
+      @as("to")
+      to?: Address.t,
+      @as("tokenId")
+      tokenId?: bigint,
       mockEventData?: EventFunctions.mockEventData,
     }
 
     @genType
     let createMockEvent = args => {
-      let {?from, ?to, ?tokenId, ?mockEventData} = args
+      let {
+        ?from,
+        ?to,
+        ?tokenId,
+        ?mockEventData,
+      } = args
 
-      let params: Types.SokosERC721Contract.TransferEvent.eventArgs = {
-        from: from->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
-        to: to->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
-        tokenId: tokenId->Belt.Option.getWithDefault(Ethers.BigInt.zero),
+      let params: Types.SokosERC721.Transfer.eventArgs = 
+      {
+       from: from->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
+       to: to->Belt.Option.getWithDefault(TestHelpers_MockAddresses.defaultAddress),
+       tokenId: tokenId->Belt.Option.getWithDefault(0n),
       }
 
       EventFunctions.makeEventMocker(~params, ~mockEventData)
     }
   }
+
 }
+

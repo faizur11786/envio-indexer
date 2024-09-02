@@ -1,3 +1,4 @@
+
 /***** TAKE NOTE ******
 This file module is a hack to get genType to work!
 
@@ -33,7 +34,7 @@ open Belt
 /**
 A raw js binding to allow deleting from a dict. Used in store delete operation
 */
-let deleteDictKey: (Js.Dict.t<'a>, string) => unit = %raw(`
+let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     function(dict, key) {
       delete dict[key]
     }
@@ -44,32 +45,34 @@ The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a re
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
 store
 */
+@genType.opaque
+type inMemoryStore = InMemoryStore.t
+
 @genType
 type rec t = {
-  __dbInternal__: IO.InMemoryStore.t,
+  __dbInternal__: inMemoryStore,
   entities: entities,
-  rawEvents: storeOperations<IO.InMemoryStore.rawEventsKey, Types.rawEventsEntity>,
-  eventSyncState: storeOperations<Types.chainId, DbFunctions.EventSyncState.eventSyncState>,
+  rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
+  eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
   dynamicContractRegistry: storeOperations<
-    IO.InMemoryStore.dynamicContractRegistryKey,
-    Types.dynamicContractRegistryEntity,
+    InMemoryStore.dynamicContractRegistryKey,
+    TablesStatic.DynamicContractRegistry.t,
   >,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
 @genType
 and entities = {
-  @as("Account") account: entityStoreOperations<Entities.Account.t>,
-  @as("Collection") collection: entityStoreOperations<Entities.Collection.t>,
-  @as("Factory_CollectionDeployed")
-  factory_CollectionDeployed: entityStoreOperations<Entities.Factory_CollectionDeployed.t>,
-  @as("Nft") nft: entityStoreOperations<Entities.Nft.t>,
-  @as("SokosERC721_Transfer")
-  sokosERC721_Transfer: entityStoreOperations<Entities.SokosERC721_Transfer.t>,
-}
+    @as("Account") account: entityStoreOperations<Entities.Account.t>,
+    @as("Collection") collection: entityStoreOperations<Entities.Collection.t>,
+    @as("Factory_CollectionDeployed") factory_CollectionDeployed: entityStoreOperations<Entities.Factory_CollectionDeployed.t>,
+    @as("Nft") nft: entityStoreOperations<Entities.Nft.t>,
+    @as("SokosERC721_Transfer") sokosERC721_Transfer: entityStoreOperations<Entities.SokosERC721_Transfer.t>,
+  }
 // User defined entities always have a string for an id which is used as the
 // key for entity stores
-@genType and entityStoreOperations<'entity> = storeOperations<string, 'entity>
+@genType
+and entityStoreOperations<'entity> = storeOperations<string, 'entity>
 // all the operator functions a user can access on an entity in the mock db
 // stores refer to the the module that MakeStore functor outputs in IO.res
 @genType
@@ -80,79 +83,80 @@ and storeOperations<'entityKey, 'entity> = {
   delete: 'entityKey => t,
 }
 
-module type StoreStateEntity = {
-  type value
-  type key
-  let get: (IO.InMemoryStore.storeStateEntity<value, key>, key) => option<value>
-  let values: IO.InMemoryStore.storeStateEntity<value, key> => array<
-    Types.inMemoryStoreRowEntity<value>,
-  >
-  // TODO: add initValue function here too
-  let set: (
-    IO.InMemoryStore.storeStateEntity<value, key>,
-    ~key: key,
-    ~entity: Types.entityUpdate<value>,
-  ) => unit
+/**
+Removes all existing indices on an entity in the mockDB and
+adds an index for each field to ensure getWhere queries are
+always accounted for
+*/
+let updateEntityIndicesMockDb = (
+  ~mockDbTable: InMemoryTable.Entity.t<'entity>,
+  ~entity: 'entity,
+  ~entityId,
+) => {
+  let entityIndices = switch mockDbTable.table
+  ->InMemoryTable.get(entityId)
+  ->Option.map(r => r.entityIndices) {
+  | Some(entityIndices) => entityIndices
+  | None => Js.Exn.raiseError("Unexpected, updateEntityIndicesMockDb was called before entity was set")
+  }
+  //first prune all indices to avoid stale values
+  mockDbTable->InMemoryTable.Entity.deleteEntityFromIndices(~entityId, ~entityIndices)
+
+  //then add all indices
+  entity
+  ->Utils.magic
+  ->Js.Dict.entries
+  ->Array.forEach(((fieldName, fieldValue)) => {
+    let index = TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue)
+    mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
+    entityIndices->InMemoryTable.StdSet.add(index)->ignore
+  })
 }
 
-module type StoreStateMeta = {
-  type value
-  type key
-  let get: (IO.InMemoryStore.storeStateMeta<value, key>, key) => option<value>
-  let values: IO.InMemoryStore.storeStateMeta<value, key> => array<
-    Types.inMemoryStoreRowMeta<value>,
-  >
-  let set: (IO.InMemoryStore.storeStateMeta<value, key>, ~key: key, ~entity: value) => unit
-}
-
-// /**
-// a composable function to make the "storeOperations" record to represent all the mock
-// db operations for each entity.
-// */
+/**
+a composable function to make the "storeOperations" record to represent all the mock
+db operations for each entity.
+*/
 let makeStoreOperatorEntity = (
-  type entity key,
-  storeStateMod: module(StoreStateEntity with type value = entity and type key = key),
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~makeMockDb,
-  ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeStateEntity<entity, key>,
-  ~getKey: entity => key,
-): storeOperations<key, entity> => {
-  let module(StoreState) = storeStateMod
-  let {get, values, set} = module(StoreState)
+  ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
+  ~getKey: 'entity => Types.id,
+): storeOperations<Types.id, 'entity> => {
+  let {get, values, set} = module(InMemoryTable.Entity)
 
-  let get = inMemoryStore->getStore->get
+  let get = id => get(inMemoryStore->getStore, id)->Utils.Option.flatten
+
   let getAll = () =>
     inMemoryStore
     ->getStore
     ->values
-    ->Array.keepMap(row =>
-      switch row {
-      | Updated({latest: {entityUpdateAction: Set(entity)}})
-      | InitialReadFromDb(AlreadySet(entity)) =>
-        Some(entity)
-      | Updated({latest: {entityUpdateAction: Delete(_)}})
-      | InitialReadFromDb(NotSet) =>
-        None
-      }
-    )
 
   let set = entity => {
-    let cloned = inMemoryStore->IO.InMemoryStore.clone
-    cloned
-    ->getStore
-    ->set(
-      ~key=entity->getKey,
-      ~entity=Set(entity)->Types.mkEntityUpdate(
+    let cloned = inMemoryStore->InMemoryStore.clone
+    let table = cloned->getStore
+    let entityId = entity->getKey
+
+    table->set(
+      Set(entity)->Types.mkEntityUpdate(
+        ~entityId,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
       ),
     )
+
+    updateEntityIndicesMockDb(~mockDbTable=table, ~entity, ~entityId)
     cloned->makeMockDb
   }
 
   let delete = key => {
-    let cloned = inMemoryStore->IO.InMemoryStore.clone
+    let cloned = inMemoryStore->InMemoryStore.clone
     let store = cloned->getStore
-    store.dict->deleteDictKey(key->store.hasher)
+    let entityIndices = switch store.table->InMemoryTable.get(key) {
+    | Some({entityIndices}) => entityIndices
+    | None => InMemoryTable.StdSet.make()
+    }
+    store->InMemoryTable.Entity.deleteEntityFromIndices(~entityId=key, ~entityIndices)
+    store.table.dict->deleteDictKey(key)
     cloned->makeMockDb
   }
 
@@ -165,31 +169,28 @@ let makeStoreOperatorEntity = (
 }
 
 let makeStoreOperatorMeta = (
-  type meta key,
-  storeStateMod: module(StoreStateMeta with type value = meta and type key = key),
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~makeMockDb,
-  ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeStateMeta<meta, key>,
-  ~getKey: meta => key,
-): storeOperations<key, meta> => {
-  let module(StoreState) = storeStateMod
-  let {get, values, set} = module(StoreState)
+  ~getStore: InMemoryStore.t => InMemoryTable.t<'key, 'value>,
+  ~getKey: 'value => 'key,
+): storeOperations<'key, 'value> => {
+  let {get, values, set} = module(InMemoryTable)
 
-  let get = inMemoryStore->getStore->get
-  // unit => array<StoreState.value>
+  let get = id => get(inMemoryStore->getStore, id)
+
   let getAll = () => inMemoryStore->getStore->values->Array.map(row => row)
 
-  let set = entity => {
-    let cloned = inMemoryStore->IO.InMemoryStore.clone
-    cloned->getStore->set(~key=entity->getKey, ~entity)
+  let set = metaData => {
+    let cloned = inMemoryStore->InMemoryStore.clone
+    cloned->getStore->set(metaData->getKey, metaData)
     cloned->makeMockDb
   }
 
   // TODO: Remove. Is delete needed for meta data?
   let delete = key => {
-    let cloned = inMemoryStore->IO.InMemoryStore.clone
+    let cloned = inMemoryStore->InMemoryStore.clone
     let store = cloned->getStore
-    store.dict->deleteDictKey(key->store.hasher)
+    store.dict->deleteDictKey(key->store.hash)
     cloned->makeMockDb
   }
 
@@ -206,8 +207,8 @@ The internal make function which can be passed an in memory store and
 instantiate a "MockDb". This is useful for cloning or making a MockDb
 out of an existing inMemoryStore
 */
-let rec makeWithInMemoryStore: IO.InMemoryStore.t => t = (inMemoryStore: IO.InMemoryStore.t) => {
-  let rawEvents = module(IO.InMemoryStore.RawEvents)->makeStoreOperatorMeta(
+let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemoryStore.t) => {
+  let rawEvents = makeStoreOperatorMeta(
     ~inMemoryStore,
     ~makeMockDb=makeWithInMemoryStore,
     ~getStore=db => db.rawEvents,
@@ -217,69 +218,65 @@ let rec makeWithInMemoryStore: IO.InMemoryStore.t => t = (inMemoryStore: IO.InMe
     },
   )
 
-  let eventSyncState =
-    module(IO.InMemoryStore.EventSyncState)->makeStoreOperatorMeta(
-      ~inMemoryStore,
-      ~makeMockDb=makeWithInMemoryStore,
-      ~getStore=db => db.eventSyncState,
-      ~getKey=({chainId}) => chainId,
-    )
+  let eventSyncState = makeStoreOperatorMeta(
+    ~inMemoryStore,
+    ~makeMockDb=makeWithInMemoryStore,
+    ~getStore=db => db.eventSyncState,
+    ~getKey=({chainId}) => chainId,
+  )
 
-  let dynamicContractRegistry =
-    module(IO.InMemoryStore.DynamicContractRegistry)->makeStoreOperatorMeta(
-      ~inMemoryStore,
-      ~getStore=db => db.dynamicContractRegistry,
-      ~makeMockDb=makeWithInMemoryStore,
-      ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
-    )
+  let dynamicContractRegistry = makeStoreOperatorMeta(
+    ~inMemoryStore,
+    ~getStore=db => db.dynamicContractRegistry,
+    ~makeMockDb=makeWithInMemoryStore,
+    ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
+  )
 
   let entities = {
-    account: {
-      module(IO.InMemoryStore.Account)->makeStoreOperatorEntity(
-        ~inMemoryStore,
-        ~makeMockDb=makeWithInMemoryStore,
-        ~getStore=db => db.account,
-        ~getKey=({id}) => id,
-      )
-    },
-    collection: {
-      module(IO.InMemoryStore.Collection)->makeStoreOperatorEntity(
-        ~inMemoryStore,
-        ~makeMockDb=makeWithInMemoryStore,
-        ~getStore=db => db.collection,
-        ~getKey=({id}) => id,
-      )
-    },
-    factory_CollectionDeployed: {
-      module(IO.InMemoryStore.Factory_CollectionDeployed)->makeStoreOperatorEntity(
-        ~inMemoryStore,
-        ~makeMockDb=makeWithInMemoryStore,
-        ~getStore=db => db.factory_CollectionDeployed,
-        ~getKey=({id}) => id,
-      )
-    },
-    nft: {
-      module(IO.InMemoryStore.Nft)->makeStoreOperatorEntity(
-        ~inMemoryStore,
-        ~makeMockDb=makeWithInMemoryStore,
-        ~getStore=db => db.nft,
-        ~getKey=({id}) => id,
-      )
-    },
-    sokosERC721_Transfer: {
-      module(IO.InMemoryStore.SokosERC721_Transfer)->makeStoreOperatorEntity(
-        ~inMemoryStore,
-        ~makeMockDb=makeWithInMemoryStore,
-        ~getStore=db => db.sokosERC721_Transfer,
-        ~getKey=({id}) => id,
-      )
-    },
+      account: {
+        makeStoreOperatorEntity(
+          ~inMemoryStore,
+          ~makeMockDb=makeWithInMemoryStore,
+          ~getStore=db => db.account,
+          ~getKey=({id}) => id,
+        )
+      },
+      collection: {
+        makeStoreOperatorEntity(
+          ~inMemoryStore,
+          ~makeMockDb=makeWithInMemoryStore,
+          ~getStore=db => db.collection,
+          ~getKey=({id}) => id,
+        )
+      },
+      factory_CollectionDeployed: {
+        makeStoreOperatorEntity(
+          ~inMemoryStore,
+          ~makeMockDb=makeWithInMemoryStore,
+          ~getStore=db => db.factory_CollectionDeployed,
+          ~getKey=({id}) => id,
+        )
+      },
+      nft: {
+        makeStoreOperatorEntity(
+          ~inMemoryStore,
+          ~makeMockDb=makeWithInMemoryStore,
+          ~getStore=db => db.nft,
+          ~getKey=({id}) => id,
+        )
+      },
+      sokosERC721_Transfer: {
+        makeStoreOperatorEntity(
+          ~inMemoryStore,
+          ~makeMockDb=makeWithInMemoryStore,
+          ~getStore=db => db.sokosERC721_Transfer,
+          ~getKey=({id}) => id,
+        )
+      },
   }
 
   {__dbInternal__: inMemoryStore, entities, rawEvents, eventSyncState, dynamicContractRegistry}
 }
-
-//Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
 /**
 The constructor function for a mockDb. Call it and then set up the inital state by calling
@@ -287,8 +284,9 @@ any of the set functions it provides access to. A mockDb will be passed into a p
 helper. Note, process event helpers will not mutate the mockDb but return a new mockDb with
 new state so you can compare states before and after.
 */
-@genType
-let createMockDb = () => makeWithInMemoryStore(IO.InMemoryStore.make())
+//Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
+@genType 
+let createMockDb = () => makeWithInMemoryStore(InMemoryStore.make())
 
 /**
 Accessor function for getting the internal inMemoryStore in the mockDb
@@ -300,95 +298,29 @@ Deep copies the in memory store data and returns a new mockDb with the same
 state and no references to data from the passed in mockDb
 */
 let cloneMockDb = (self: t) => {
-  let clonedInternalDb = self->getInternalDb->IO.InMemoryStore.clone
+  let clonedInternalDb = self->getInternalDb->InMemoryStore.clone
   clonedInternalDb->makeWithInMemoryStore
 }
 
-/**
-Specifically create an executor for the mockDb
-*/
-let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreInitFn, ~store, ~getEntiyId) => {
-  let dbReadFn = idsArr => idsArr->Belt.Array.keepMap(id => id->dbReadFn)
-  IO.makeEntityExecuterComposer(
-    ~idsToLoad,
-    ~dbReadFn,
-    ~inMemStoreInitFn,
-    ~store,
-    ~getEntiyId,
-    ~unit=(),
-    ~then=(res, fn) => res->fn,
-  )
+let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
+  let module(Entity: Entities.InternalEntity) = entityMod
+  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
 }
 
-/**
-Executes a single load layer using the mockDb functions
-*/
-let executeMockDbLoadLayer = (
-  mockDb: t,
-  ~loadLayer: IO.LoadLayer.t,
-  ~inMemoryStore: IO.InMemoryStore.t,
-) => {
-  let entityExecutors = [
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.accountIdsToLoad,
-      ~dbReadFn=mockDb.entities.account.get,
-      ~inMemStoreInitFn=IO.InMemoryStore.Account.initValue,
-      ~store=inMemoryStore.account,
-      ~getEntiyId=entity => entity.id,
-    ),
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.collectionIdsToLoad,
-      ~dbReadFn=mockDb.entities.collection.get,
-      ~inMemStoreInitFn=IO.InMemoryStore.Collection.initValue,
-      ~store=inMemoryStore.collection,
-      ~getEntiyId=entity => entity.id,
-    ),
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.factory_CollectionDeployedIdsToLoad,
-      ~dbReadFn=mockDb.entities.factory_CollectionDeployed.get,
-      ~inMemStoreInitFn=IO.InMemoryStore.Factory_CollectionDeployed.initValue,
-      ~store=inMemoryStore.factory_CollectionDeployed,
-      ~getEntiyId=entity => entity.id,
-    ),
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.nftIdsToLoad,
-      ~dbReadFn=mockDb.entities.nft.get,
-      ~inMemStoreInitFn=IO.InMemoryStore.Nft.initValue,
-      ~store=inMemoryStore.nft,
-      ~getEntiyId=entity => entity.id,
-    ),
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.sokosERC721_TransferIdsToLoad,
-      ~dbReadFn=mockDb.entities.sokosERC721_Transfer.get,
-      ~inMemStoreInitFn=IO.InMemoryStore.SokosERC721_Transfer.initValue,
-      ~store=inMemoryStore.sokosERC721_Transfer,
-      ~getEntiyId=entity => entity.id,
-    ),
-  ]
-  let handleResponses = _ => {
-    IO.getNextLayer(~loadLayer)
+let makeLoadEntitiesByIds = (mockDb: t) => {
+  (ids, ~entityMod, ~logger as _=?) => {
+    let operations = mockDb->getEntityOperations(~entityMod)
+    ids->Array.keepMap(id => operations.get(id))->Promise.resolve
   }
-
-  IO.executeLoadLayerComposer(~entityExecutors, ~handleResponses)
 }
 
-/**
-Given an isolated inMemoryStore and an array of read entities. This function loads the 
-requested data from the mockDb into the inMemory store. Simulating how loading happens
-from and external db into the inMemoryStore for a batch during event processing
-*/
-let loadEntitiesToInMemStore = (mockDb, ~entityBatch, ~inMemoryStore) => {
-  let executeLoadLayerFn = mockDb->executeMockDbLoadLayer
-  //In an async handler this would be a Promise.then... in this case
-  //just need to return the value and pass it into the callback
-  let then = (res, fn) => res->fn
-  IO.loadEntitiesToInMemStoreComposer(
-    ~inMemoryStore,
-    ~entityBatch,
-    ~executeLoadLayerFn,
-    ~then,
-    ~unit=(),
-  )
+let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
+  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
+  async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
+    mockDbTable->InMemoryTable.Entity.getOnIndex(
+      ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+    )
+  }
 }
 
 /**
@@ -397,30 +329,32 @@ Runs all set and delete operations currently cached in an inMemory store against
 */
 let executeRowsEntity = (
   mockDb: t,
-  ~inMemoryStore: IO.InMemoryStore.t,
-  ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeStateEntity<'entity, 'key>,
-  ~getRows: IO.InMemoryStore.storeStateEntity<'entity, 'key> => array<
-    Types.inMemoryStoreRowEntity<'entity>,
-  >,
+  ~inMemoryStore: InMemoryStore.t,
+  ~getInMemTable: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => 'key,
-  ~setFunction: (
-    ~allowOverWriteEntity: bool=?,
-    ~key: 'key,
-    ~entity: option<'entity>,
-    IO.InMemoryStore.storeStateEntity<'entity, 'key>,
-  ) => unit,
 ) => {
-  inMemoryStore
-  ->getStore
-  ->getRows
+  let inMemTable = getInMemTable(inMemoryStore)
+
+  inMemTable.table
+  ->InMemoryTable.values
   ->Array.forEach(row => {
-    let store = mockDb->getInternalDb->getStore
-    switch row {
+    let mockDbTable = mockDb->getInternalDb->getInMemTable
+    switch row.entityRow {
     | Updated({latest: {entityUpdateAction: Set(entity)}})
     | InitialReadFromDb(AlreadySet(entity)) =>
-      store->setFunction(~allowOverWriteEntity=true, ~key=getKey(entity), ~entity=Some(entity))
-    | Updated({latest: {entityUpdateAction: Delete(entityId)}}) =>
-      store.dict->deleteDictKey(entityId)
+      let key = getKey(entity)
+      mockDbTable->InMemoryTable.Entity.initValue(
+        ~allowOverWriteEntity=true,
+        ~key,
+        ~entity=Some(entity),
+      )
+      updateEntityIndicesMockDb(~mockDbTable, ~entity, ~entityId=key)
+    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
+      mockDbTable.table.dict->deleteDictKey(entityId)
+      mockDbTable->InMemoryTable.Entity.deleteEntityFromIndices(
+        ~entityId,
+        ~entityIndices=InMemoryTable.StdSet.make(),
+      )
     | InitialReadFromDb(NotSet) => ()
     }
   })
@@ -428,23 +362,15 @@ let executeRowsEntity = (
 
 let executeRowsMeta = (
   mockDb: t,
-  ~inMemoryStore: IO.InMemoryStore.t,
-  ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeStateMeta<'entity, 'key>,
-  ~getRows: IO.InMemoryStore.storeStateMeta<'entity, 'key> => array<
-    Types.inMemoryStoreRowMeta<'entity>,
-  >,
+  ~inMemoryStore: InMemoryStore.t,
+  ~getInMemTable: InMemoryStore.t => InMemoryTable.t<'key, 'entity>,
   ~getKey: 'entity => 'key,
-  ~setFunction: (
-    IO.InMemoryStore.storeStateMeta<'entity, 'key>,
-    ~key: 'key,
-    ~entity: 'entity,
-  ) => unit,
 ) => {
   inMemoryStore
-  ->getStore
-  ->getRows
+  ->getInMemTable
+  ->InMemoryTable.values
   ->Array.forEach(row => {
-    mockDb->getInternalDb->getStore->setFunction(~key=getKey(row), ~entity=row)
+    mockDb->getInternalDb->getInMemTable->InMemoryTable.set(getKey(row), row)
   })
 }
 
@@ -452,15 +378,12 @@ let executeRowsMeta = (
 Simulates the writing of processed data in the inMemoryStore to a mockDb. This function
 executes all the rows on each "store" (or pg table) in the inMemoryStore
 */
-let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
-  open IO
+let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
   //INTERNAL STORES/TABLES EXECUTION
   mockDb->executeRowsMeta(
     ~inMemoryStore,
-    ~getRows=InMemoryStore.RawEvents.values,
-    ~getStore=inMemStore => {inMemStore.rawEvents},
-    ~setFunction=InMemoryStore.RawEvents.set,
-    ~getKey=(entity): IO.InMemoryStore.rawEventsKey => {
+    ~getInMemTable=inMemStore => {inMemStore.rawEvents},
+    ~getKey=(entity): InMemoryStore.rawEventsKey => {
       chainId: entity.chainId,
       eventId: entity.eventId,
     },
@@ -468,57 +391,44 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
 
   mockDb->executeRowsMeta(
     ~inMemoryStore,
-    ~getStore=inMemStore => {inMemStore.eventSyncState},
-    ~getRows=InMemoryStore.EventSyncState.values,
-    ~setFunction=InMemoryStore.EventSyncState.set,
+    ~getInMemTable=inMemStore => {inMemStore.eventSyncState},
     ~getKey=entity => entity.chainId,
   )
 
   mockDb->executeRowsMeta(
     ~inMemoryStore,
-    ~getRows=InMemoryStore.DynamicContractRegistry.values,
-    ~getStore=inMemStore => {inMemStore.dynamicContractRegistry},
-    ~setFunction=InMemoryStore.DynamicContractRegistry.set,
-    ~getKey=(entity): IO.InMemoryStore.dynamicContractRegistryKey => {
+    ~getInMemTable=inMemStore => {inMemStore.dynamicContractRegistry},
+    ~getKey=(entity): InMemoryStore.dynamicContractRegistryKey => {
       chainId: entity.chainId,
       contractAddress: entity.contractAddress,
     },
   )
 
-  //ENTITY EXECUTION
+//ENTITY EXECUTION
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getStore=self => {self.account},
-    ~getRows=IO.InMemoryStore.Account.values,
-    ~setFunction=IO.InMemoryStore.Account.initValue,
+    ~getInMemTable=self => {self.account},
     ~getKey=entity => entity.id,
   )
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getStore=self => {self.collection},
-    ~getRows=IO.InMemoryStore.Collection.values,
-    ~setFunction=IO.InMemoryStore.Collection.initValue,
+    ~getInMemTable=self => {self.collection},
     ~getKey=entity => entity.id,
   )
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getStore=self => {self.factory_CollectionDeployed},
-    ~getRows=IO.InMemoryStore.Factory_CollectionDeployed.values,
-    ~setFunction=IO.InMemoryStore.Factory_CollectionDeployed.initValue,
+    ~getInMemTable=self => {self.factory_CollectionDeployed},
     ~getKey=entity => entity.id,
   )
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getStore=self => {self.nft},
-    ~getRows=IO.InMemoryStore.Nft.values,
-    ~setFunction=IO.InMemoryStore.Nft.initValue,
+    ~getInMemTable=self => {self.nft},
     ~getKey=entity => entity.id,
   )
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getStore=self => {self.sokosERC721_Transfer},
-    ~getRows=IO.InMemoryStore.SokosERC721_Transfer.values,
-    ~setFunction=IO.InMemoryStore.SokosERC721_Transfer.initValue,
+    ~getInMemTable=self => {self.sokosERC721_Transfer},
     ~getKey=entity => entity.id,
   )
 }
+

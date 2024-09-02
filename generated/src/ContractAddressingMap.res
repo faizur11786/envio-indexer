@@ -1,41 +1,20 @@
 type contractName = string
 
-exception UndefinedContractName(contractName, Types.chainId)
-exception UndefinedContractAddress(Ethers.ethAddress)
-
 // Currently this mapping append only, so we don't need to worry about
 // protecting static addresses from de-registration.
 
 type mapping = {
-  nameByAddress: Js.Dict.t<contractName>,
-  addressesByName: Js.Dict.t<Belt.Set.String.t>,
+  nameByAddress: dict<contractName>,
+  addressesByName: dict<Belt.Set.String.t>,
 }
 
-let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
-  let address = address->Ethers.formatEthAddress
-  map.nameByAddress->Js.Dict.set(address->Ethers.ethAddressToString, name)
+let addAddress = (map: mapping, ~name: string, ~address: Address.t) => {
+  map.nameByAddress->Js.Dict.set(address->Address.toString, name)
 
   let oldAddresses =
     map.addressesByName->Js.Dict.get(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
-  let newAddresses = oldAddresses->Belt.Set.String.add(address->Ethers.ethAddressToString)
+  let newAddresses = oldAddresses->Belt.Set.String.add(address->Address.toString)
   map.addressesByName->Js.Dict.set(name, newAddresses)
-}
-
-/// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
-let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
-  let address = address->Ethers.formatEthAddress
-  let addressIsNew =
-    map.nameByAddress
-    ->Js.Dict.get(address->Ethers.ethAddressToString)
-    ->Belt.Option.mapWithDefault(true, expectedName => expectedName != name)
-
-  /* check the name, since differently named contracts can have the same address */
-
-  if addressIsNew {
-    addAddress(map, ~name, ~address)
-  }
-
-  addressIsNew
 }
 
 let getAddresses = (map: mapping, name: string) => {
@@ -51,32 +30,12 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-// Insert the static address into the Contract <-> Address bi-mapping
-let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
-  chainConfig.contracts->Belt.Array.forEach(contract => {
-    contract.addresses->Belt.Array.forEach(address => {
-      Logging.childTrace(
-        logger,
-        {
-          "msg": "adding contract address",
-          "contractName": contract.name,
-          "address": address,
-        },
-      )
-
-      mapping->addAddress(~name=contract.name, ~address)
-    })
-  })
+let getContractNameFromAddress = (mapping, ~contractAddress: Address.t): option<contractName> => {
+  mapping->getName(contractAddress->Address.toString)
 }
 
-let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress): option<
-  contractName,
-> => {
-  mapping->getName(contractAddress->Ethers.ethAddressToString)
-}
-
-let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
-let keyValStringToAddress: array<(string, string)> => array<(Ethers.ethAddress, string)> = Obj.magic
+let stringsToAddresses: array<string> => array<Address.t> = Utils.magic
+let keyValStringToAddress: array<(string, string)> => array<(Address.t, string)> = Utils.magic
 
 let getAddressesFromContractName = (mapping, ~contractName) => {
   switch mapping->getAddresses(contractName) {
@@ -97,13 +56,13 @@ let combine = (a, b) => {
     v.nameByAddress
     ->Js.Dict.entries
     ->Belt.Array.forEach(((addr, name)) => {
-      m->addAddress(~address=addr->Obj.magic, ~name)
+      m->addAddress(~address=addr->Utils.magic, ~name)
     })
   )
   m
 }
 
-let fromArray = (nameAddrTuples: array<(Ethers.ethAddress, string)>) => {
+let fromArray = (nameAddrTuples: array<(Address.t, string)>) => {
   let m = make()
   nameAddrTuples->Belt.Array.forEach(((address, name)) => m->addAddress(~name, ~address))
   m
@@ -112,15 +71,17 @@ let fromArray = (nameAddrTuples: array<(Ethers.ethAddress, string)>) => {
 /**
 Creates a new mapping from the previous without the addresses passed in as "addressesToRemove"
 */
-let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAddress>) => {
+let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Address.t>) => {
   mapping.nameByAddress
   ->Js.Dict.entries
   ->Belt.Array.keep(((addr, _name)) => {
-    let shouldRemove = addressesToRemove->Utils.arrayIncludes(addr->Obj.magic)
+    let shouldRemove = addressesToRemove->Utils.Array.includes(addr->Utils.magic)
     !shouldRemove
   })
   ->keyValStringToAddress
   ->fromArray
 }
 
-let isEmpty = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length == 0
+let addressCount = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length
+
+let isEmpty = (mapping: mapping) => mapping->addressCount == 0

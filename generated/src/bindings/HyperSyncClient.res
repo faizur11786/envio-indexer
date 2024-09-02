@@ -1,188 +1,365 @@
-type unchecksummedEthAddress = string
-
-type t
-
 type cfg = {
-  url: string,
-  bearer_token?: string,
-  http_req_timeout_millis?: int,
+  url?: string,
+  bearerToken?: string,
+  httpReqTimeoutMillis?: int,
+  maxNumRetries?: int,
+  retryBackoffMs?: int,
+  retryBaseMs?: int,
+  retryCeilingMs?: int,
+  enableChecksumAddresses?: bool,
 }
 
 module QueryTypes = {
-  type blockFieldOptions =
-    | @as("number") Number
-    | @as("hash") Hash
-    | @as("parent_hash") ParentHash
-    | @as("nonce") Nonce
-    | @as("sha3_uncles") Sha3Uncles
-    | @as("logs_bloom") LogsBloom
-    | @as("transactions_root") TransactionsRoot
-    | @as("state_root") StateRoot
-    | @as("receipts_root") ReceiptsRoot
-    | @as("miner") Miner
-    | @as("difficulty") Difficulty
-    | @as("total_difficulty") TotalDifficulty
-    | @as("extra_data") ExtraData
-    | @as("size") Size
-    | @as("gas_limit") GasLimit
-    | @as("gas_used") GasUsed
-    | @as("timestamp") Timestamp
-    | @as("uncles") Uncles
-    | @as("base_fee_per_gas") BaseFeePerGas
+  type blockField =
+    | Number
+    | Hash
+    | ParentHash
+    | Nonce
+    | Sha3Uncles
+    | LogsBloom
+    | TransactionsRoot
+    | StateRoot
+    | ReceiptsRoot
+    | Miner
+    | Difficulty
+    | TotalDifficulty
+    | ExtraData
+    | Size
+    | GasLimit
+    | GasUsed
+    | Timestamp
+    | Uncles
+    | BaseFeePerGas
+    | BlobGasUsed
+    | ExcessBlobGas
+    | ParentBeaconBlockRoot
+    | WithdrawalsRoot
+    | Withdrawals
+    | L1BlockNumber
+    | SendCount
+    | SendRoot
+    | MixHash
 
-  type blockFieldSelection = array<blockFieldOptions>
+  type transactionField =
+    | BlockHash
+    | BlockNumber
+    | From
+    | Gas
+    | GasPrice
+    | Hash
+    | Input
+    | Nonce
+    | To
+    | TransactionIndex
+    | Value
+    | V
+    | R
+    | S
+    | YParity
+    | MaxPriorityFeePerGas
+    | MaxFeePerGas
+    | ChainId
+    | AccessList
+    | MaxFeePerBlobGas
+    | BlobVersionedHashes
+    | CumulativeGasUsed
+    | EffectiveGasPrice
+    | GasUsed
+    | ContractAddress
+    | LogsBloom
+    | Kind
+    | Root
+    | Status
+    | L1Fee
+    | L1GasPrice
+    | L1GasUsed
+    | L1FeeScalar
+    | GasUsedForL1
 
-  type transactionFieldOptions =
-    | @as("block_hash") BlockHash
-    | @as("block_number") BlockNumber
-    | @as("from") From
-    | @as("gas") Gas
-    | @as("gas_price") GasPrice
-    | @as("hash") Hash
-    | @as("input") Input
-    | @as("nonce") Nonce
-    | @as("to") To
-    | @as("transaction_index") TransactionIndex
-    | @as("value") Value
-    | @as("v") V
-    | @as("r") R
-    | @as("s") S
-    | @as("max_priority_fee_per_gas") MaxPriorityFeePerGas
-    | @as("max_fee_per_gas") MaxFeePerGas
-    | @as("chainId") ChainId
-    | @as("cumulative_gas_used") CumulativeGasUsed
-    | @as("effective_gas_price") EffectiveGasPrice
-    | @as("gas_used") GasUsed
-    | @as("contract_address") ContractAddress
-    | @as("logs_bloom") LogsBloom
-    | @as("type") Type
-    | @as("root") Root
-    | @as("status") Status
-    | @as("sighash") Sighash
+  type logField =
+    | Removed
+    | LogIndex
+    | TransactionIndex
+    | TransactionHash
+    | BlockHash
+    | BlockNumber
+    | Address
+    | Data
+    | Topic0
+    | Topic1
+    | Topic2
+    | Topic3
 
-  type transactionFieldSelection = array<transactionFieldOptions>
-
-  type logFieldOptions =
-    | @as("removed") Removed
-    | @as("log_index") LogIndex
-    | @as("transaction_index") TransactionIndex
-    | @as("transaction_hash") TransactionHash
-    | @as("block_hash") BlockHash
-    | @as("block_number") BlockNumber
-    | @as("address") Address
-    | @as("data") Data
-    | @as("topic0") Topic0
-    | @as("topic1") Topic1
-    | @as("topic2") Topic2
-    | @as("topic3") Topic3
-
-  type logFieldSelection = array<logFieldOptions>
+  type traceField =
+    | From
+    | To
+    | CallType
+    | Gas
+    | Input
+    | Init
+    | Value
+    | Author
+    | RewardType
+    | BlockHash
+    | BlockNumber
+    | Address
+    | Code
+    | GasUsed
+    | Output
+    | Subtraces
+    | TraceAddress
+    | TransactionHash
+    | TransactionPosition
+    | Kind
+    | Error
 
   type fieldSelection = {
-    block?: blockFieldSelection,
-    transaction?: transactionFieldSelection,
-    log?: logFieldSelection,
+    block?: array<blockField>,
+    transaction?: array<transactionField>,
+    log?: array<logField>,
+    trace?: array<traceField>,
+  }
+  type topicFilter = array<Ethers.EventFilter.topic>
+  type topic0 = topicFilter
+  type topic1 = topicFilter
+  type topic2 = topicFilter
+  type topic3 = topicFilter
+  type topicSelection = (topic0, topic1, topic2, topic3)
+  let makeTopicSelection = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => (
+    topic0,
+    topic1,
+    topic2,
+    topic3,
+  )
+
+  type logSelection = {
+    /**
+     * Address of the contract, any logs that has any of these addresses will be returned.
+     * Empty means match all.
+     */
+    address?: array<Address.t>,
+    /**
+     * Topics to match, each member of the top level array is another array, if the nth topic matches any
+     *  topic specified in topics[n] the log will be returned. Empty means match all.
+     */
+    topics: topicSelection,
   }
 
-  type logParams = {
-    address?: array<Ethers.ethAddress>,
-    topics: array<array<Ethers.EventFilter.topic>>,
-  }
+  let makeLogSelection = (~address, ~topics) => {address, topics}
 
-  type transactionParams = {
-    from?: array<Ethers.ethAddress>,
+  type transactionSelection = {
+    /**
+     * Address the transaction should originate from. If transaction.from matches any of these, the transaction
+     *  will be returned. Keep in mind that this has an and relationship with to filter, so each transaction should
+     *  match both of them. Empty means match all.
+     */
+    from?: array<Address.t>,
+    /**
+     * Address the transaction should go to. If transaction.to matches any of these, the transaction will
+     *  be returned. Keep in mind that this has an and relationship with from filter, so each transaction should
+     *  match both of them. Empty means match all.
+     */
     @as("to")
-    to_?: array<Ethers.ethAddress>,
+    to_?: array<Address.t>,
+    /** If first 4 bytes of transaction input matches any of these, transaction will be returned. Empty means match all. */
+    sighash?: array<string>,
+    /** If tx.status matches this it will be returned. */
+    status?: int,
+    /** If transaction.type matches any of these values, the transaction will be returned */
+    kind?: array<int>,
+    contractAddress?: array<Address.t>,
+  }
+
+  type traceSelection = {
+    from?: array<Address.t>,
+    @as("to") to_?: array<Address.t>,
+    address?: array<Address.t>,
+    callType?: array<string>,
+    rewardType?: array<string>,
+    kind?: array<string>,
     sighash?: array<string>,
   }
 
-  type postQueryBody = {
+  type blockSelection = {
+    /**
+     * Hash of a block, any blocks that have one of these hashes will be returned.
+     * Empty means match all.
+     */
+    hash?: array<string>,
+    /**
+     * Miner address of a block, any blocks that have one of these miners will be returned.
+     * Empty means match all.
+     */
+    miner?: array<Address.t>,
+  }
+
+  type joinMode = | @as(0) Default | @as(1) JoinAll | @as(2) JoinNothing
+
+  type query = {
+    /** The block to start the query from */
     fromBlock: int,
-    @as("toBlock") toBlockExclusive?: int,
-    logs?: array<logParams>,
-    transactions?: array<transactionParams>,
+    /**
+     * The block to end the query at. If not specified, the query will go until the
+     *  end of data. Exclusive, the returned range will be [from_block..to_block).
+     *
+     * The query will return before it reaches this target block if it hits the time limit
+     *  configured on the server. The user should continue their query by putting the
+     *  next_block field in the response into from_block field of their next query. This implements
+     *  pagination.
+     */
+    @as("toBlock")
+    toBlockExclusive?: int,
+    /**
+     * List of log selections, these have an or relationship between them, so the query will return logs
+     * that match any of these selections.
+     */
+    logs?: array<logSelection>,
+    /**
+     * List of transaction selections, the query will return transactions that match any of these selections and
+     *  it will return transactions that are related to the returned logs.
+     */
+    transactions?: array<transactionSelection>,
+    /**
+     * List of trace selections, the query will return traces that match any of these selections and
+     *  it will re turn traces that are related to the returned logs.
+     */
+    traces?: array<traceSelection>,
+    /** List of block selections, the query will return blocks that match any of these selections */
+    blocks?: array<blockSelection>,
+    /**
+     * Field selection. The user can select which fields they are interested in, requesting less fields will improve
+     *  query execution time and reduce the payload size so the user should always use a minimal number of fields.
+     */
     fieldSelection: fieldSelection,
+    /**
+     * Maximum number of blocks that should be returned, the server might return more blocks than this number but
+     *  it won't overshoot by too much.
+     */
+    maxNumBlocks?: int,
+    /**
+     * Maximum number of transactions that should be returned, the server might return more transactions than this number but
+     *  it won't overshoot by too much.
+     */
+    maxNumTransactions?: int,
+    /**
+     * Maximum number of logs that should be returned, the server might return more logs than this number but
+     *  it won't overshoot by too much.
+     */
     maxNumLogs?: int,
+    /**
+     * Maximum number of traces that should be returned, the server might return more traces than this number but
+     *  it won't overshoot by too much.
+     */
+    maxNumTraces?: int,
+    /**
+     * Selects join mode for the query,
+     * Default: join in this order logs -> transactions -> traces -> blocks
+     * JoinAll: join everything to everything. For example if logSelection matches log0, we get the
+     * associated transaction of log0 and then we get associated logs of that transaction as well. Applites similarly
+     * to blocks, traces.
+     * JoinNothing: join nothing.
+     */
+    joinMode?: joinMode,
   }
 }
 
 module ResponseTypes = {
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
-  type blockData = {
+  type withdrawal = {
+    index?: string,
+    validatorIndex?: string,
+    address?: Address.t,
+    amount?: string,
+  }
+
+  type block = {
     number?: int,
     hash?: string,
     parentHash?: string,
-    nonce?: int, //nullable
+    nonce?: bigint,
     sha3Uncles?: string,
     logsBloom?: string,
     transactionsRoot?: string,
     stateRoot?: string,
     receiptsRoot?: string,
-    miner?: unchecksummedEthAddress,
-    difficulty?: Ethers.BigInt.t, //nullable
-    totalDifficulty?: Ethers.BigInt.t, //nullable
+    miner?: Address.t,
+    difficulty?: bigint,
+    totalDifficulty?: bigint,
     extraData?: string,
-    size?: Ethers.BigInt.t,
-    gasLimit?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    size?: bigint,
+    gasLimit?: bigint,
+    gasUsed?: bigint,
     timestamp?: int,
-    uncles?: string, //nullable
-    baseFeePerGas?: Ethers.BigInt.t, //nullable
+    uncles?: array<string>,
+    baseFeePerGas?: bigint,
+    blobGasUsed?: bigint,
+    excessBlobGas?: bigint,
+    parentBeaconBlockRoot?: string,
+    withdrawalsRoot?: string,
+    withdrawals?: array<withdrawal>,
+    l1BlockNumber?: int,
+    sendCount?: string,
+    sendRoot?: string,
+    mixHash?: string,
   }
 
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
-  type transactionData = {
+  type accessList = {
+    address?: Address.t,
+    storageKeys?: array<string>,
+  }
+
+  type transaction = {
     blockHash?: string,
     blockNumber?: int,
-    from?: unchecksummedEthAddress, //nullable
-    gas?: Ethers.BigInt.t,
-    gasPrice?: Ethers.BigInt.t, //nullable
+    from?: string,
+    gas?: bigint,
+    gasPrice?: bigint,
     hash?: string,
     input?: string,
-    nonce?: int,
-    to?: unchecksummedEthAddress, //nullable
-    @as("transactionIndex") transactionIndex?: int,
-    value?: Ethers.BigInt.t,
-    v?: string, //nullable
-    r?: string, //nullable
-    s?: string, //nullable
-    maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
-    maxFeePerGas?: Ethers.BigInt.t, //nullable
-    chainId?: int, //nullable
-    cumulativeGasUsed?: Ethers.BigInt.t,
-    effectiveGasPrice?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
-    contractAddress?: unchecksummedEthAddress, //nullable
-    logsBoom?: string,
-    type_?: int, //nullable
-    root?: string, //nullable
-    status?: int, //nullable
-    sighash?: string, //nullable
+    nonce?: bigint,
+    to?: string,
+    transactionIndex?: int,
+    value?: bigint,
+    v?: string,
+    r?: string,
+    s?: string,
+    yParity?: string,
+    maxPriorityFeePerGas?: bigint,
+    maxFeePerGas?: bigint,
+    chainId?: int,
+    accessList?: array<accessList>,
+    maxFeePerBlobGas?: bigint,
+    blobVersionedHashes?: array<string>,
+    cumulativeGasUsed?: bigint,
+    effectiveGasPrice?: bigint,
+    gasUsed?: bigint,
+    contractAddress?: string,
+    logsBloom?: string,
+    kind?: int,
+    root?: string,
+    status?: int,
+    l1Fee?: bigint,
+    l1GasPrice?: bigint,
+    l1GasUsed?: bigint,
+    l1FeeScalar?: int,
+    gasUsedForL1?: bigint,
   }
 
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
-  type logData = {
-    removed?: bool, //nullable
+  type log = {
+    removed?: bool,
     @as("logIndex") index?: int,
     transactionIndex?: int,
     transactionHash?: string,
     blockHash?: string,
     blockNumber?: int,
-    address?: unchecksummedEthAddress,
+    address?: Address.t,
     data?: string,
-    topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>, //nullable
+    topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>,
   }
 
   type event = {
-    transaction?: transactionData,
-    block?: blockData,
-    log: logData,
+    transaction?: transaction,
+    block?: block,
+    log: log,
   }
 
   type rollbackGuard = {
@@ -206,63 +383,61 @@ module ResponseTypes = {
     firstParentHash: string,
   }
 
-  type response = {
-    //Archive Height is only None if height is 0
+  type eventResponse = {
+    /** Current height of the source hypersync instance */
     archiveHeight: option<int>,
+    /**
+     * Next block to query for, the responses are paginated so,
+     *  the caller should continue the query from this block if they
+     *  didn't get responses up to the to_block they specified in the Query.
+     */
     nextBlock: int,
+    /** Total time it took the hypersync instance to execute the query. */
     totalExecutionTime: int,
-    events: array<event>,
+    /** Response data */
+    data: array<event>,
+    /** Rollback guard, supposed to be used to detect rollbacks */
     rollbackGuard: option<rollbackGuard>,
   }
 }
 
-module Internal = {
-  type constructor
-  @module("@envio-dev/hypersync-client") external constructor: constructor = "HypersyncClient"
+type query = QueryTypes.query
+type eventResponse = ResponseTypes.eventResponse
 
-  @send external make: (constructor, cfg) => t = "new"
-
-  @send
-  external sendEventsReq: (t, QueryTypes.postQueryBody) => promise<ResponseTypes.response> =
-    "sendEventsReq"
+//Todo, add bindings for these types
+type streamConfig
+type queryResponse
+type queryResponseStream
+type eventStream
+type t = {
+  getHeight: unit => promise<int>,
+  collect: (~query: query, ~config: streamConfig) => promise<queryResponse>,
+  collectEvents: (~query: query, ~config: streamConfig) => promise<eventResponse>,
+  collectParquet: (~path: string, ~query: query, ~config: streamConfig) => promise<unit>,
+  get: (~query: query) => promise<queryResponse>,
+  getEvents: (~query: query) => promise<eventResponse>,
+  stream: (~query: query, ~config: streamConfig) => promise<queryResponseStream>,
+  streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
 }
 
-let make = (cfg: cfg) => {
-  open Internal
+@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
 
-  let cfg_with_token = {...cfg, bearer_token: "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"}
-
-  constructor->make(cfg_with_token)
-}
-
-let sendEventsReq = Internal.sendEventsReq
+let defaultToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+let make = (~url) =>
+  new({
+    url,
+    enableChecksumAddresses: true,
+    bearerToken: Env.envioApiToken->Belt.Option.getWithDefault(defaultToken),
+  })
 
 module Decoder = {
-  type abiMapping = Js.Dict.t<Ethers.abi>
-
-  type constructor
-  @module("@envio-dev/hypersync-client") external constructor: constructor = "Decoder"
-
-  type t
-
-  @send external new: (constructor, abiMapping) => t = "new"
-  @send external enableChecksummedAddresses: t => unit = "enableChecksummedAddresses"
-
-  let make = abiMapping => {
-    let t = constructor->new(abiMapping)
-    t->enableChecksummedAddresses
-    t
-  }
-  /*
-  Note! Usinging opaque definitions here since unboxed doesn't yet support bigint!
-
   type rec decodedSolType<'a> = {val: 'a}
 
   @unboxed
   type rec decodedRaw =
     | DecodedBool(bool)
     | DecodedStr(string)
-    | DecodedNum(Js.Bigint.t)
+    | DecodedNum(bigint)
     | DecodedVal(decodedSolType<decodedRaw>)
     | DecodedArr(array<decodedRaw>)
 
@@ -270,7 +445,7 @@ module Decoder = {
   type rec decodedUnderlying =
     | Bool(bool)
     | Str(string)
-    | Num(Js.Bigint.t)
+    | Num(bigint)
     | Arr(array<decodedUnderlying>)
 
   let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
@@ -282,46 +457,22 @@ module Decoder = {
     | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
     }
   }
-*/
-
-  type decodedRaw
-  type decodedUnderlying
-  /**
-  See the commented code above. This should be possible with unboxed
-  rescript types but since there is not support yet for bigint I've just
-  copied the rescript generated code (using int instead of bigint) and swapped
-  it out int for bigint. 
-  */
-  let toUnderlying: decodedRaw => decodedUnderlying = %raw(`
-    function toUnderlying(_d) {
-      while(true) {
-        var d = _d;
-        if (Array.isArray(d)) {
-          return d.map(toUnderlying);
-        }
-        switch (typeof d) {
-          case "boolean" :
-              return d;
-          case "string" :
-              return d;
-          case "bigint" :
-              return d;
-          case "object" :
-              _d = d.val;
-              continue ;
-          default:
-            throw new Error("Unsupported type encountered: " + typeof d);
-        }
-      };
-    }
-  `)
 
   type decodedEvent = {
     indexed: array<decodedRaw>,
     body: array<decodedRaw>,
   }
 
-  @send
-  external decodeEvents: (t, array<ResponseTypes.event>) => promise<array<option<decodedEvent>>> =
-    "decodeEvents"
+  type log
+  type t = {
+    enableChecksummedAddresses: unit => unit,
+    disableChecksummedAddresses: unit => unit,
+    decodeLogs: array<log> => promise<array<Js.Nullable.t<decodedEvent>>>,
+    decodeLogsSync: array<log> => array<Js.Nullable.t<decodedEvent>>,
+    decodeEvents: array<ResponseTypes.event> => promise<array<Js.Nullable.t<decodedEvent>>>,
+    decodeEventsSync: array<ResponseTypes.event> => array<Js.Nullable.t<decodedEvent>>,
+  }
+
+  @module("@envio-dev/hypersync-client") @scope("Decoder")
+  external fromSignatures: array<string> => t = "fromSignatures"
 }

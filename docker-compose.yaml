@@ -31,12 +31,12 @@ services:
       HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
       PORT: 9000
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-    healthcheck:
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
-      interval: 5s
-      timeout: 2s
-      retries: 50
-      start_period: 5s
+    # healthcheck:
+    #   test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
+    #   interval: 5s
+    #   timeout: 2s
+    #   retries: 50
+    #   start_period: 5s
     networks:
       - my-proxy-net
   envio-indexer:

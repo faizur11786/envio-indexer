@@ -1,4 +1,3 @@
-import { SokosERC721Contract_TransferEvent_handlerContext } from "generated";
 import { NftMetadata } from "./types";
 import { NftCache } from "./cache";
 import { userLogger } from "generated/src/Logs.gen";
@@ -10,7 +9,7 @@ async function fetchFromEndpoint(
   logger: userLogger
 ): Promise<NftMetadata | null> {
   try {
-    const url = new URL("/api/nfts", "https://console.sokos.io");
+    const url = new URL("/api/nfts", process.env.SOKOS_CONSOLE_URL);
 
     const query = {
       and: [

@@ -90,7 +90,7 @@ services:
 volumes:
   db_data:
     external: true
-    
+    name: db_data
 networks:
   my-proxy-net:
     name: local_test_network

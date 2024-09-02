@@ -27,11 +27,13 @@ lib/*
 /node_modules/
 benchmarks/
 artifacts
-.cache
+cache
 logs
 *.bs.js
 *.bs.mjs
 *.gen.ts
 build
+
+generated/
 
 .env

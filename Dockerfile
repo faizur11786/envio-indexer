@@ -12,4 +12,7 @@ RUN npm install --global pnpm
 RUN pnpm install
 
 RUN pnpm envio codegen
-CMD ./envio-entrypoint.sh
+
+
+RUN chmod +x ./envio-entrypoint.sh
+ENTRYPOINT ["/bin/sh", "./envio-entrypoint.sh"]

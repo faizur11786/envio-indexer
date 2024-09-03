@@ -76,8 +76,8 @@ services:
       MAX_BATCH_SIZE: 10_000
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:9000/v1/metadata
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
-      HASURA_SERVICE_HOST: graphql-engine
-      HASURA_SERVICE_PORT: 9000
+      HASURA_SERVICE_HOST: "${HASURA_SERVICE_HOST:-graphql-engine}"
+      HASURA_SERVICE_PORT: "${HASURA_SERVICE_PORT:-9000}"
       TUI_OFF: ${TUI_OFF:-true}
     healthcheck:
       test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1

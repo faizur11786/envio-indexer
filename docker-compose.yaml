@@ -33,7 +33,7 @@ services:
       PORT: 8080
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
     healthcheck:
-      test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/14545' || exit 1
+      test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/8080' || exit 1
       interval: 5s
       timeout: 2s
       retries: 50

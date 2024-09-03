@@ -33,12 +33,12 @@ services:
       HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
       PORT: 8080
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-    healthcheck:
-      test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/8080' || exit 1
-      interval: 5s
-      timeout: 2s
-      retries: 50
-      start_period: 5s
+    # healthcheck:
+    #   test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/8080' || exit 1
+    #   interval: 5s
+    #   timeout: 2s
+    #   retries: 50
+    #   start_period: 5s
     networks:
       - coolify
 
@@ -79,12 +79,12 @@ services:
       HASURA_SERVICE_HOST: graphql-engine
       HASURA_SERVICE_PORT: 8080
       TUI_OFF: ${TUI_OFF:-true}
-    healthcheck:
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1
-      interval: 5s
-      timeout: 2s
-      retries: 50
-      start_period: 5s
+    # healthcheck:
+    #   test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1
+    #   interval: 5s
+    #   timeout: 2s
+    #   retries: 50
+    #   start_period: 5s
     networks:
       - coolify
 

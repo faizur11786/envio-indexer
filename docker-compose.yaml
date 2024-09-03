@@ -15,7 +15,7 @@ services:
   graphql-engine:
     image: hasura/graphql-engine:v2.23.0
     ports:
-      - "${HASURA_EXTERNAL_PORT:-8888}:8888"
+      - "${HASURA_EXTERNAL_PORT:-9000}:8080"
     user: 1001:1001
     depends_on:
       - "envio-postgres"
@@ -29,10 +29,10 @@ services:
       HASURA_GRAPHQL_NO_OF_RETRIES: 10
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
       HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-      PORT: 8888
+      PORT: 8080
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
     healthcheck:
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8888' || exit 1
+      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
       interval: 5s
       timeout: 2s
       retries: 50
@@ -72,15 +72,15 @@ services:
       MAX_QUEUE_SIZE: 50_000
       MAX_BATCH_SIZE: 10_000
       # these variables can be skips if hasura is not necessary
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8888/v1/metadata
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:9000/v1/metadata
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
       HASURA_SERVICE_HOST: graphql-engine
-      HASURA_SERVICE_PORT: 8888
+      HASURA_SERVICE_PORT: 9000
       TUI_OFF: ${TUI_OFF:-true}
     healthcheck:
       # CMD from a GH issue thread, no curl or wget installed with image
       # but hasura comes with a /healthz public endpoint for checking server health
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8888' || exit 1
+      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
       interval: 5s
       timeout: 2s
       retries: 50

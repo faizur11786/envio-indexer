@@ -12,10 +12,11 @@ services:
       POSTGRES_DB: ${ENVIO_PG_DATABASE:-envio-dev}
     networks:
       - my-proxy-net
+
   graphql-engine:
     image: hasura/graphql-engine:v2.23.0
     ports:
-      - "${HASURA_EXTERNAL_PORT:-9000}:8080"
+      - "${HASURA_EXTERNAL_PORT:-14545}:14545"
     user: 1001:1001
     depends_on:
       - "envio-postgres"
@@ -29,16 +30,17 @@ services:
       HASURA_GRAPHQL_NO_OF_RETRIES: 10
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
       HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-      PORT: 8080
+      PORT: 14545
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
     healthcheck:
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
+      test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/14545' || exit 1
       interval: 5s
       timeout: 2s
       retries: 50
       start_period: 5s
     networks:
       - my-proxy-net
+
   envio-indexer:
     container_name: envio-indexer
     build:
@@ -52,8 +54,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.8' # limit the resource of the container to 80% of 1 CPU (800m) testing for live environment
-          memory: 800M # conservative can be increased if needed
+          cpus: '0.8'
+          memory: 800M
     restart: always
     environment:
       ENVIO_POSTGRES_PASSWORD: ${ENVIO_POSTGRES_PASSWORD:-testing}
@@ -71,26 +73,25 @@ services:
       LOG_STRATEGY: ${LOG_STRATEGY:-console-pretty}
       MAX_QUEUE_SIZE: 50_000
       MAX_BATCH_SIZE: 10_000
-      # these variables can be skips if hasura is not necessary
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:9000/v1/metadata
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:14545/v1/metadata
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
       HASURA_SERVICE_HOST: graphql-engine
-      HASURA_SERVICE_PORT: 9000
+      HASURA_SERVICE_PORT: 14545
       TUI_OFF: ${TUI_OFF:-true}
     healthcheck:
-      # CMD from a GH issue thread, no curl or wget installed with image
-      # but hasura comes with a /healthz public endpoint for checking server health
-      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
+      test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1
       interval: 5s
       timeout: 2s
       retries: 50
       start_period: 5s
     networks:
       - my-proxy-net
+
 volumes:
   db_data:
     external: true
     name: db_data
+
 networks:
   my-proxy-net:
     name: local_test_network

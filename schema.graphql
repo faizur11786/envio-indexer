@@ -15,22 +15,23 @@ type SokosERC721_Transfer {
   tokenId: BigInt!
 }
 
-type Collection @index(fields: ["contractAddress", "owner"]) {
+type Collections @index(fields: ["contractAddress", "owner"]) {
   id: ID!
   contractAddress: String!
   name: String!
   symbol: String!
   uri: String!
   isERC1155: Boolean!
-  nfts: [Nft!]! @derivedFrom(field: "collection")
-  owner: Account!
+  nfts: [Nfts!]! @derivedFrom(field: "collection")
+  owner: Accounts!
+  chainId: Int!
 }
 
-type Nft {
+type Nfts {
   id: ID!
   tokenId: BigInt!
-  owner: Account! @index
-  collection: Collection! @index
+  owner: Accounts! @index
+  collection: Collections! @index
   tokenUrl: String!
   image: String!
   name: String!
@@ -39,10 +40,23 @@ type Nft {
   standard: String!
   supply: String!
   attributes: String!
+  market: Markets
+  chainId: Int!
 }
 
-type Account {
+type Accounts {
   id: ID!
+}
+
+type Markets {
+  id: ID!
+  nft: Nfts! @index
+  seller: Accounts! @index
+  quantity: BigInt!
+  priceInUsd: BigInt!
+  timestamp: BigInt!
+  isActive: Boolean!
+  chainId: Int!
 }
 
 # type Nftcollection @entity {

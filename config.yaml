@@ -1,17 +1,30 @@
 name: sokos-indexer
 ecosystem: evm
 
+contracts:
+  - name: SokosDiamond
+    handler: src/handlers/sokos-diamond.ts
+    events:
+      - event: CollectionDeployed(address indexed tokenAddress, address owner, bool isERC1155, string name, string symbol, string uri)
+      - event: ListingAdd(uint256 indexed listingId, address indexed seller, address indexed tokenAddress, uint256 tokenId, uint256 quantity, uint256 priceInUsd, uint256 timestamp)
+  - name: SokosERC721
+    handler: src/handlers/sokos-erc721.ts
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+
 networks:
   - id: 137
     start_block: 0
     contracts:
-      - name: Factory
+      - name: SokosDiamond
         address:
           - 0xE1eB832df4FE2e15df1ac8777fAfC897866caB21
-        handler: src/handlers/factory.ts
-        events:
-          - event: CollectionDeployed(address indexed tokenAddress, address owner, bool isERC1155, string name, string symbol, string uri)
       - name: SokosERC721
-        handler: src/handlers/sokos-erc721.ts
-        events:
-          - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+
+  - id: 17000
+    start_block: 0
+    contracts:
+      - name: SokosDiamond
+        address:
+          - 0xe42F8dB9c30fCFE91224604eE16Ee6D7c6d39eDC
+      - name: SokosERC721

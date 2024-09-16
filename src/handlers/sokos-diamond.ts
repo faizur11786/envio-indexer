@@ -31,10 +31,6 @@ SokosDiamond.ListingAdd.handler(async ({ event, context }) => {
   const { listingId, seller, tokenAddress, tokenId, quantity, priceInUsd, timestamp } = event.params
 
 
-
-
-
-
   const entity: Markets = {
     id: listingId.toString(),
     seller_id: seller,

@@ -41,17 +41,5 @@ SokosDiamond.ListingAdd.handler(async ({ event, context }) => {
     timestamp: timestamp,
     chainId: event.chainId
   };
-
-  // transfer
-  const nft = await context.Nfts.get(
-    `${tokenAddress}-${tokenId.toString()}`
-  );
-
-  if (!nft) {
-    throw new Error("Can't transfer non-existing NFT");
-  }
-
-  context.Nfts.set({ ...nft, market_id: listingId.toString() })
   context.Markets.set(entity);
-
 });

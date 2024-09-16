@@ -41,7 +41,6 @@ SokosERC721.Transfer.handler(async ({ event, context }) => {
       attributes: JSON.stringify(metadata.attributes),
       isPhygital: Boolean(metadata.isPhygital),
       chainId: event.chainId,
-      market_id: undefined
     });
   } else {
     // transfer

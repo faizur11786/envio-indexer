@@ -40,7 +40,7 @@ type Nfts {
   standard: String!
   supply: String!
   attributes: String!
-  market: Markets
+  # market: Markets!
   chainId: Int!
 }
 

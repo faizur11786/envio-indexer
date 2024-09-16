@@ -79,6 +79,7 @@ services:
       HASURA_SERVICE_HOST: graphql-engine
       HASURA_SERVICE_PORT: 8080
       TUI_OFF: ${TUI_OFF:-true}
+      SOKOS_CONSOLE_URL: ${SOKOS_CONSOLE_URL:-https://console.sokos.io}
     # healthcheck:
     #   test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1
     #   interval: 5s

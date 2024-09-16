@@ -50,6 +50,8 @@ services:
     ports:
       - "8081:8081"
     depends_on:
+      envio-postgres:
+        condition: service_healthy
       graphql-engine:
         condition: service_healthy
     deploy:

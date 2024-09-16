@@ -11,8 +11,6 @@ RUN npm install --global pnpm
 
 RUN pnpm install
 
-RUN rm -rf generated
-
 RUN pnpm envio codegen
 
 

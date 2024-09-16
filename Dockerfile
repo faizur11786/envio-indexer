@@ -9,6 +9,8 @@ COPY . .
 ENV PNPM_HOME /usr/local/binp
 RUN npm install --global pnpm
 
+RUN rm -rf generated
+
 RUN pnpm install
 
 RUN pnpm envio codegen

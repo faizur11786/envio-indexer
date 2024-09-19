@@ -2,7 +2,7 @@ import sqlite3 from "sqlite3";
 import { NftMetadata } from "./types";
 
 // SQLite database initialization
-const db = new sqlite3.Database(".cache/cache.db");
+const db = new sqlite3.Database("cache/cache.db");
 
 export class NftCache {
   static async init() {

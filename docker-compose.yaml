@@ -74,7 +74,7 @@ services:
       LOG_STRATEGY: ${LOG_STRATEGY:-console-pretty}
       MAX_QUEUE_SIZE: 50_000
       MAX_BATCH_SIZE: 10_000
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:9000/v1/metadata
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080/v1/metadata
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
       HASURA_SERVICE_HOST: graphql-engine
       HASURA_SERVICE_PORT: 8080

@@ -42,6 +42,7 @@ type Nfts {
   attributes: String!
   market: Markets
   chainId: Int!
+  categories: [String!]!
 }
 
 type Accounts {

@@ -31,6 +31,7 @@ SokosERC721.Transfer.handler(async ({ event, context }) => {
       event.params.tokenId,
       context.log
     );
+
     context.Nfts.set({
       id: `${event.srcAddress}-${event.params.tokenId.toString()}`,
       tokenId: event.params.tokenId,
@@ -41,7 +42,8 @@ SokosERC721.Transfer.handler(async ({ event, context }) => {
       attributes: JSON.stringify(metadata.attributes),
       isPhygital: Boolean(metadata.isPhygital),
       chainId: event.chainId,
-      market_id: undefined
+      market_id: undefined,
+      categories: metadata?.categories,
     });
   } else {
     // transfer

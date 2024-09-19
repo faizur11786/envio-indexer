@@ -35,5 +35,6 @@ logs
 build
 
 generated/
+.cache/
 
 .env

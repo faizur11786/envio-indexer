@@ -7,4 +7,5 @@ export type NftMetadata = {
   isPhygital: boolean | string;
   standard: string;
   supply: string;
+  categories: string[];
 };

@@ -21,7 +21,7 @@ async function fetchFromEndpoint(
     };
 
     const stringifiedQuery = QueryString.stringify(
-      { where: query },
+      { where: query, depth: 5 },
       { addQueryPrefix: true }
     );
     const fullUrl = `${url.toString()}${stringifiedQuery}`;
@@ -32,7 +32,11 @@ async function fetchFromEndpoint(
 
     if (!data.totalDocs) throw new Error("no data found for token " + data);
 
-    const fullNft = data.docs[0];
+    const fullNft = data.docs[0]
+
+
+    const categories: string[] = fullNft?.token?.categories?.map((category: { slug: string }) => category.slug) || [];
+
 
     const metadata: NftMetadata = {
       image: fullNft.metadata.image.url,
@@ -43,6 +47,7 @@ async function fetchFromEndpoint(
       isPhygital: fullNft.metadata.isPhygital,
       standard: fullNft.token.standard,
       supply: fullNft.supply,
+      categories: categories,
     };
     return metadata;
   } catch (e) {
@@ -82,5 +87,6 @@ export const processTokenMetadata = async (
     isPhygital: "unknown",
     standard: "unknown",
     supply: "unknown",
+    categories: [],
   };
 };

@@ -47,7 +47,7 @@ async function fetchFromEndpoint(
       isPhygital: fullNft.metadata.isPhygital,
       standard: fullNft.token.standard,
       supply: fullNft.supply,
-      categories: categories,
+      categories: categories.join(",")
     };
     return metadata;
   } catch (e) {

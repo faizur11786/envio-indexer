@@ -87,6 +87,6 @@ export const processTokenMetadata = async (
     isPhygital: "unknown",
     standard: "unknown",
     supply: "unknown",
-    categories: [],
+    categories: "unknown",
   };
 };

@@ -1,4 +1,3 @@
-
 ARG ARCH=
 FROM ${ARCH}mcr.microsoft.com/devcontainers/javascript-node:20-bookworm
 WORKDIR /app/base

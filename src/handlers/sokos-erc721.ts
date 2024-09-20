@@ -27,6 +27,7 @@ SokosERC721.Transfer.handler(async ({ event, context }) => {
   if (event.params.from === ZERO_ADDRESS) {
     //mint
     const metadata = await processTokenMetadata(
+      event.chainId,
       event.srcAddress.toLowerCase(),
       event.params.tokenId,
       context.log

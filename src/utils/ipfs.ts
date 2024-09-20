@@ -4,12 +4,15 @@ import { userLogger } from "generated/src/Logs.gen";
 import QueryString from "qs";
 
 async function fetchFromEndpoint(
+  chainId: number,
   tokenAddress: string,
   tokenId: string,
   logger: userLogger
 ): Promise<NftMetadata | null> {
   try {
-    const url = new URL("/api/nfts", process.env.SOKOS_CONSOLE_URL);
+    const baseUrl = chainId === 137 ? "https://console.sokos.io" : "https://dev-console.sokos.io"
+
+    const url = new URL("/api/nfts", baseUrl);
 
     const query = {
       and: [
@@ -57,6 +60,7 @@ async function fetchFromEndpoint(
 }
 
 export const processTokenMetadata = async (
+  chainId: number,
   tokenAddress: string,
   tokenId: BigInt,
   logger: userLogger
@@ -68,6 +72,7 @@ export const processTokenMetadata = async (
   }
 
   const metadata = await fetchFromEndpoint(
+    chainId,
     tokenAddress,
     tokenId.toString(),
     logger

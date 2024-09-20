@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   envio-postgres:
     image: postgres:16
@@ -13,6 +15,11 @@ services:
       POSTGRES_DB: ${ENVIO_PG_DATABASE:-envio-dev}
     networks:
       - coolify
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ENVIO_PG_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   graphql-engine:
     image: hasura/graphql-engine:v2.23.0
@@ -33,12 +40,11 @@ services:
       HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
       PORT: 8080
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-    # healthcheck:
-    #   test: timeout 1s bash -c ':> /dev/tv1p/127.0.0.1/8080' || exit 1
-    #   interval: 5s
-    #   timeout: 2s
-    #   retries: 50
-    #   start_period: 5s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - coolify
 
@@ -50,6 +56,8 @@ services:
     ports:
       - "8081:8081"
     depends_on:
+      envio-postgres:
+        condition: service_healthy
       graphql-engine:
         condition: service_healthy
     deploy:
@@ -76,20 +84,22 @@ services:
       MAX_BATCH_SIZE: 10_000
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080/v1/metadata
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
-      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
       HASURA_SERVICE_HOST: graphql-engine
       HASURA_SERVICE_PORT: 8080
       TUI_OFF: ${TUI_OFF:-true}
-      SOKOS_CONSOLE_URL: ${SOKOS_CONSOLE_URL:-https://console.sokos.io}
-    # healthcheck:
-    #   test: timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8081' || exit 1
-    #   interval: 5s
-    #   timeout: 2s
-    #   retries: 50
-    #   start_period: 5s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - coolify
-
+    command: >
+      sh -c "
+        rm -rf /tmp/* &&
+        rm -rf /var/cache/* &&
+        exec ./envio-entrypoint.sh
+      "
 
 volumes:
   coolify-db:

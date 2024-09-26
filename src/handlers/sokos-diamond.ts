@@ -1,15 +1,20 @@
 require("dotenv").config();
 
 import { Collections, Markets, SokosDiamond } from "generated";
+import { ERC1155Addresses } from "../utils/types";
 
 export const LOG_LEVEL = "trace";
 
 SokosDiamond.CollectionDeployed.contractRegister(({ event, context }) => {
-  context.addSokosERC721(event.params.tokenAddress);
+  if (event.params.isERC1155) {
+    context.addSokosERC1155(event.params.tokenAddress);
+  } else {
+    context.addSokosERC721(event.params.tokenAddress);
+  }
+
 });
 
 SokosDiamond.CollectionDeployed.handler(async ({ event, context }) => {
-
   const { params } = event
 
   const entity: Collections = {
@@ -26,32 +31,42 @@ SokosDiamond.CollectionDeployed.handler(async ({ event, context }) => {
 });
 
 
+SokosDiamond.ListingAdd.handlerWithLoader({
+  loader: async ({ event, context }) => {
+    const { tokenAddress, tokenId, } = event.params
+    const nft = await context.Nfts.get(
+      `${tokenAddress}-${tokenId.toString()}`
+    );
+    return { nft }
+  },
+  handler: async ({ event, context, loaderReturn }) => {
+    const { listingId, seller, tokenAddress, tokenId, quantity, priceInUsd, timestamp } = event.params
 
-SokosDiamond.ListingAdd.handler(async ({ event, context }) => {
-  const { listingId, seller, tokenAddress, tokenId, quantity, priceInUsd, timestamp } = event.params
-
-
-  const entity: Markets = {
-    id: listingId.toString(),
-    seller_id: seller,
-    nft_id: `${tokenAddress}-${tokenId.toString()}`,
-    isActive: true,
-    priceInUsd: priceInUsd,
-    quantity: quantity,
-    timestamp: timestamp,
-    chainId: event.chainId
-  };
-
-  // transfer
-  const nft = await context.Nfts.get(
-    `${tokenAddress}-${tokenId.toString()}`
-  );
-
-  if (!nft) {
-    throw new Error("Can't transfer non-existing NFT");
+    const entity: Markets = {
+      id: listingId.toString(),
+      seller_id: seller,
+      nft_id: `${tokenAddress}-${tokenId.toString()}`,
+      isActive: true,
+      priceInUsd: priceInUsd,
+      quantity: quantity,
+      timestamp: timestamp,
+      chainId: event.chainId
+    };
+    context.Markets.set(entity);
+    const { nft } = loaderReturn
+    if (nft) context.Nfts.set({ ...nft })
   }
+})
 
-  context.Nfts.set({ ...nft, market_id: listingId.toString() })
-  context.Markets.set(entity);
 
-});
+
+// SokosDiamond.BuyWithFiat.handlerWithLoader({
+//   loader: async ({ event, context }) => {
+
+//   },
+//   handler: async ({ event, context }) => {
+//     const { params } = event
+
+
+//   }
+// })

@@ -17,6 +17,9 @@ importers:
       envio:
         specifier: 2.1.4
         version: 2.1.4
+      ethers:
+        specifier: 6.8.0
+        version: 6.8.0
       qs:
         specifier: ^6.13.0
         version: 6.13.0

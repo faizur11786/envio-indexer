@@ -31,13 +31,13 @@ networks:
       - name: SokosERC1155
         abi_file_path: src/abis/sokos-erc1155.json
 
-  # - id: 17000
-  #   start_block: 0
-  #   contracts:
-  #     - name: SokosDiamond
-  #       address:
-  #         - 0xe42F8dB9c30fCFE91224604eE16Ee6D7c6d39eDC
-  #     - name: SokosERC721
-  #       abi_file_path: src/abis/sokos-erc721.json
-  #     - name: SokosERC1155
-  #       abi_file_path: src/abis/sokos-erc1155.json
+  - id: 17000
+    start_block: 0
+    contracts:
+      - name: SokosDiamond
+        address:
+          - 0xe42F8dB9c30fCFE91224604eE16Ee6D7c6d39eDC
+      - name: SokosERC721
+        abi_file_path: src/abis/sokos-erc721.json
+      - name: SokosERC1155
+        abi_file_path: src/abis/sokos-erc1155.json

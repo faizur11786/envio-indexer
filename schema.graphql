@@ -24,14 +24,13 @@ type Collections @index(fields: ["contractAddress", "owner"]) {
   uri: String!
   isERC1155: Boolean!
   nfts: [Nfts!]! @derivedFrom(field: "collection")
-  owner: Accounts!
+  owner: Accounts! @index
 }
 
 type Nfts {
   id: ID!
   chainId: Int!
   tokenId: BigInt!
-  owner: Accounts! @index
   collection: Collections! @index
   tokenUrl: String!
   image: String!
@@ -45,10 +44,21 @@ type Nfts {
   categories: String!
 }
 
+type Balances {
+  id: ID!
+  chainId: Int!
+  account: Accounts! @index
+  from: Accounts! @index
+  nft: Nfts!
+  collection: Collections!
+  quantity: BigInt!
+  timestamp: BigInt!
+}
+
 type Accounts {
   id: ID!
+  balances: [Balances!]! @derivedFrom(field: "account")
   collections: [Collections!]! @derivedFrom(field: "owner")
-  nfts: [Nfts!]! @derivedFrom(field: "owner")
   markets: [Markets!]! @derivedFrom(field: "seller")
   orders: [Orders!]! @derivedFrom(field: "to")
 }
@@ -59,6 +69,7 @@ type Markets {
   nft: Nfts! @index
   seller: Accounts! @index
   quantity: BigInt!
+  soldQuantity: BigInt!
   priceInUsd: BigInt!
   timestamp: BigInt!
   isActive: Boolean!
@@ -71,4 +82,10 @@ type Orders {
   to: Accounts! @index
   from: Accounts! @index
   market: Markets! @index
+  nft: Nfts! @index
+  currency: String!
+  amount: BigInt!
+  method: String!
+  quantity: BigInt!
+  timestamp: BigInt!
 }

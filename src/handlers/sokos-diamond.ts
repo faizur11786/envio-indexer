@@ -1,7 +1,8 @@
 require("dotenv").config();
 
-import { Collections, Markets, SokosDiamond } from "generated";
+import { Collections, Markets, Orders, SokosDiamond } from "generated";
 import { ERC1155Addresses } from "../utils/types";
+import { register } from "module";
 
 export const LOG_LEVEL = "trace";
 
@@ -32,14 +33,10 @@ SokosDiamond.CollectionDeployed.handler(async ({ event, context }) => {
 
 
 SokosDiamond.ListingAdd.handlerWithLoader({
-  loader: async ({ event, context }) => {
-    const { tokenAddress, tokenId, } = event.params
-    const nft = await context.Nfts.get(
-      `${tokenAddress}-${tokenId.toString()}`
-    );
-    return { nft }
+  loader: async () => {
+    return {}
   },
-  handler: async ({ event, context, loaderReturn }) => {
+  handler: async ({ event, context }) => {
     const { listingId, seller, tokenAddress, tokenId, quantity, priceInUsd, timestamp } = event.params
 
     const entity: Markets = {
@@ -50,23 +47,52 @@ SokosDiamond.ListingAdd.handlerWithLoader({
       priceInUsd: priceInUsd,
       quantity: quantity,
       timestamp: timestamp,
-      chainId: event.chainId
+      chainId: event.chainId,
+      soldQuantity: BigInt(0)
     };
     context.Markets.set(entity);
-    const { nft } = loaderReturn
-    if (nft) context.Nfts.set({ ...nft })
   }
 })
 
 
 
-// SokosDiamond.BuyWithFiat.handlerWithLoader({
-//   loader: async ({ event, context }) => {
+SokosDiamond.BuyWithFiat.handlerWithLoader({
+  loader: async ({ event, context }) => {
+    const { params: { listingId } } = event
 
-//   },
-//   handler: async ({ event, context }) => {
-//     const { params } = event
+    const market = await context.Markets.get(listingId.toString())
+    return { market }
+  },
+  handler: async ({ event, context, loaderReturn }) => {
+    const { market } = loaderReturn
 
+    const { params, chainId } = event
+    const listingId = params.listingId.toString()
 
-//   }
-// })
+    const order: Orders = {
+      id: `${params.seller}-${params.buyer}-${listingId}`,
+      chainId: chainId,
+      to_id: params.buyer,
+      from_id: params.seller,
+      nft_id: `${params.tokenAddress}-${params.tokenId}`,
+      market_id: listingId,
+      amount: params.paidAmount,
+      currency: params.currency,
+      method: "card",
+      quantity: params.bugthQuantity,
+      timestamp: params.timestamp
+    }
+
+    context.Orders.set(order)
+
+    if (!market) return
+
+    const soldQuantity = BigInt(market.soldQuantity) + BigInt(params.bugthQuantity)
+
+    context.Markets.set({
+      ...market,
+      soldQuantity,
+      isActive: soldQuantity < market.quantity
+    })
+  }
+})

@@ -7,49 +7,39 @@ import { ZeroAddress } from "ethers";
 
 
 SokosERC1155.TransferSingle.handlerWithLoader({
-    loader: async ({ event: { params, srcAddress }, context: { Accounts, Nfts } }) => {
-        const sender = await Accounts.get(params.from.toString());
-        const receiver = await Accounts.get(params.to.toString());
-        const nft = await Nfts.get(`${srcAddress}-${params.id.toString()}`)
-        return { sender, receiver, nft }
+    loader: async ({ event: { params: { from, to, } }, context: { Accounts } }) => {
+        const sender = await Accounts.get(from.toString());
+        const receiver = await Accounts.get(to.toString());
+        return { sender, receiver }
     },
     handler: async ({
-        event: { params, block, chainId, srcAddress, },
-        context: { Accounts, log, Nfts },
+        event: { params: { from, to, id, operator, value }, block, chainId, srcAddress, },
+        context: { Accounts, log, Nfts, Balances },
         loaderReturn
     }) => {
-        const { sender, receiver, nft } = loaderReturn
+        const { sender, receiver } = loaderReturn
 
         if (!sender) {
-            Accounts.set({ id: params.from.toString() })
+            Accounts.set({ id: from.toString() })
         }
 
         if (!receiver) {
-            Accounts.set({ id: params.to.toString() })
+            Accounts.set({ id: to.toString() })
         }
 
-        if (nft) {
-            Nfts.set({
-                ...nft,
-                owner_id: params.to,
-                supply: params.value.toString()
-            });
-        } else if (params.from === ZeroAddress) {
+        if (from === ZeroAddress) {
             //mint
-            log.info(`Id ${params.id}, value ${params.value}, to ${params.to}, from ${params.from}, operator ${params.operator}`)
-
             const metadata = await processTokenMetadata(
                 "ERC1155",
                 chainId,
                 srcAddress.toLowerCase(),
-                params.id,
+                id,
                 log
             );
 
             Nfts.set({
-                id: `${srcAddress}-${params.id.toString()}`,
-                tokenId: params.id,
-                owner_id: params.to,
+                id: `${srcAddress}-${id.toString()}`,
+                tokenId: id,
                 collection_id: srcAddress,
                 ...metadata,
                 description: JSON.stringify(metadata.description),
@@ -58,8 +48,20 @@ SokosERC1155.TransferSingle.handlerWithLoader({
                 chainId: chainId,
                 categories: metadata?.categories,
                 standard: "ERC1155",
-                supply: params.value.toString(),
+                supply: value.toString(),
             });
         }
+
+        Balances.set({
+            id: `${to}-${from}-${srcAddress}-${id.toString()}-${value.toString()}`,
+            collection_id: srcAddress,
+            nft_id: `${srcAddress}-${id.toString()}`,
+            quantity: value,
+            chainId: chainId,
+            account_id: to,
+            from_id: from,
+            timestamp: BigInt(block.timestamp),
+        })
+
     }
 })
